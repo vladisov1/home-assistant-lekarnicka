@@ -1,0 +1,30 @@
+name: "Lékárnička"
+version: "0.4.2"
+slug: "lekarnicka"
+description: "Evidence léků, jednotlivých balení a úložných krabic"
+url: "https://github.com/vladisov1/home-assistant-lekarnicka"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+init: false
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Webové rozhraní v místní síti"
+webui: "http://[HOST]:[PORT:8099]"
+homeassistant_api: true
+options:
+  app_password: ""
+  ha_token: ""
+  openai_api_key: ""
+  openai_model: "gpt-4.1-mini"
+  todo_entity: "todo.leky"
+schema:
+  app_password: str?
+  ha_token: str?
+  openai_api_key: str?
+  openai_model: str
+  todo_entity: str

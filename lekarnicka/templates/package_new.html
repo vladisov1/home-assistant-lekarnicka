@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% block content %}
+<section class="panel narrow"><div class="eyebrow">{{m.name}} / ID {{m.id}}</div><h1>Nové balení</h1>
+<p>Vyplňte balení a klikněte na <strong>Přidat do seznamu</strong>. Do evidence se zapíší až po závěrečném uložení.</p>
+<form method="post"><input type="hidden" name="csrf" value="{{csrf_token()}}"><input type="hidden" name="action" value="add"><input type="hidden" name="location_id" value="{{loc_id or ''}}">
+<label>Expirace (měsíc / rok)</label><div class="expiry-input"><input type="text" name="month" maxlength="2" inputmode="numeric" placeholder="MM" aria-label="Měsíc expirace" required><span>/</span><input type="text" name="year" maxlength="4" inputmode="numeric" placeholder="RRRR" aria-label="Rok expirace" required></div>
+<label class="inlinecheck"><input type="checkbox" name="no_expiry" value="1" onchange="this.form.month.required=!this.checked;this.form.year.required=!this.checked;this.form.month.disabled=this.checked;this.form.year.disabled=this.checked"> Bez uvedené expirace</label>
+<label>Úložná krabice<select name="chosen_location" {% if loc_id %}disabled{% endif %}>{% for l in locations %}<option value="{{l.id}}" {% if l.id==loc_id %}selected{% endif %}>{{l.code}} – {{l.description}}</option>{% endfor %}</select></label>
+<button {% if not locations %}disabled{% endif %}>+ Přidat do seznamu balení</button><p><small>Dosud se nic neukládá do evidence léků.</small></p></form></section>
+<section class="panel narrow"><h2>Nově přidaná balení ({{pending|length}})</h2>
+{% if pending %}<div class="tablewrap"><table><thead><tr><th>#</th><th>Expirace</th><th>Krabice</th><th>Akce</th></tr></thead><tbody>{% for item in pending %}<tr><td>{{loop.index}}</td><td>{{pretty_exp(item.expiry)}}</td><td>{{code_by_id.get(item.location_id,'?')}}</td><td><form method="post"><input type="hidden" name="csrf" value="{{csrf_token()}}"><input type="hidden" name="action" value="remove"><input type="hidden" name="index" value="{{loop.index0}}"><button class="danger small">Odebrat</button></form></td></tr>{% endfor %}</tbody></table></div>
+{% else %}<p>Žádná připravená balení. Nejprve vyplňte formulář nahoře.</p>{% endif %}
+<form method="post"><input type="hidden" name="csrf" value="{{csrf_token()}}"><input type="hidden" name="action" value="save"><input type="hidden" name="location_id" value="{{loc_id or ''}}"><button {% if not pending %}disabled{% endif %}>Uložit {{pending|length}} balení do evidence</button></form>
+<p><small>Teprve tímto tlačítkem se připravená balení uloží a otevře se karta léku.</small></p></section>{% endblock %}

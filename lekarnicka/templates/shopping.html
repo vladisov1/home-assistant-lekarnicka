@@ -1,0 +1,9 @@
+{% extends 'base.html' %}{% block content %}
+<h1>🛒 Nákupní košík</h1>
+<p>Košík se ukládá v databázi Lékárničky. Odeslání do Home Assistantu je samostatná akce; při aktualizaci aplikace se položky nemažou.</p>
+<div class="tablewrap"><table><thead><tr><th>Lék</th><th>Množství</th><th>Akce</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{r.item_name}}</td><td><form method="post" action="{{url_for('shopping_quantity',mid=r.medicine_id)}}" class="actions compact"><input type="hidden" name="csrf" value="{{csrf_token()}}"><input type="number" name="quantity" min="1" max="99" value="{{r.quantity}}" style="width:75px;margin:0"><button class="small">Uložit</button></form></td><td><a class="btn secondary small" href="{{url_for('medicine_detail',mid=r.medicine_id)}}">Karta léku</a><form method="post" action="{{url_for('medicine_shopping',mid=r.medicine_id)}}" style="display:inline"><input type="hidden" name="csrf" value="{{csrf_token()}}"><button class="danger small">Odebrat z košíku</button></form></td></tr>
+{% else %}<tr><td colspan="3" class="empty">Košík je prázdný.</td></tr>{% endfor %}</tbody></table></div>
+{% if rows %}<form method="post" action="{{url_for('shopping_sync')}}" style="margin-top:18px"><input type="hidden" name="csrf" value="{{csrf_token()}}"><button>Odeslat do seznamu Léky v Home Assistantu</button></form>{% endif %}
+<p><small>Existující položky v Home Assistantu se nepřepisují ani nemažou. Automatické vytvoření seznamu vyžaduje samostatné ověření podpory Home Assistantu.</small></p>
+{% endblock %}
