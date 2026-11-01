@@ -4,14 +4,8 @@ Vlastní aplikace pro evidenci léků, balení a úložných boxů.
 
 ## Instalace z repozitáře
 
-Přidejte adresu `https://github.com/vladisov1/home-assistant-lekarnicka` v Home Assistantu v části Aplikace → Repozitáře, obnovte seznam a nainstalujte Lékárničku.
+⚠️ Projekt ve vývoji – ALPHA verze
 
-**Upozornění:** Verze 0.4.2 je testovací kandidát, dosud neověřený v běžícím Home Assistantu. Před testováním zálohujte data. Instalace z GitHubu má jiný identifikátor než lokální `local_lekarnicka`; její `/data` se automaticky nepřenáší. Neodinstalovávejte původní aplikaci, dokud není přenos dat ověřen.
+Lékárnička pro Home Assistant je aktuálně ve fázi aktivního vývoje a testování. Některé funkce mohou být neúplné nebo se mohou měnit. Aplikace zatím není určena pro běžné produkční používání.
 
-## Aktualizace
-
-Při novém vydání aktualizujte soubory aplikace a hodnotu `version` v `lekarnicka/config.yaml`. Home Assistant může nabídnout aktualizaci po obnovení informací o repozitáři.
-
-## Soukromí
-
-Do repozitáře nevkládejte databázi `inventory.db`, `options.json`, hesla, API klíče ani tokeny.
+Děkujeme za pochopení. První stabilní verze bude zveřejněna po dokončení funkčního testování.
