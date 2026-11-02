@@ -1,5 +1,6 @@
 import io
 import csv
+import zipfile
 from openpyxl import load_workbook, Workbook
 import base64
 import shutil
@@ -92,10 +93,71 @@ def init_db():
         for field in ('ean','dosage_form','active_ingredient','manufacturer','sukl_code','atc','description'):
             if field not in medcols:
                 con.execute(f"ALTER TABLE medicines ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
+        for field, definition in [
+            ('registered_name', "TEXT NOT NULL DEFAULT ''"),
+            ('name_suffix', "TEXT NOT NULL DEFAULT ''"),
+            ('package_size', "TEXT NOT NULL DEFAULT ''"),
+            ('registration_number', "TEXT NOT NULL DEFAULT ''"),
+            ('dispensing', "TEXT NOT NULL DEFAULT ''"),
+            ('registration_status', "TEXT NOT NULL DEFAULT ''"),
+            ('stock_alert_enabled', 'INTEGER NOT NULL DEFAULT 0'),
+            ('stock_alert_mode', "TEXT NOT NULL DEFAULT 'packages'"),
+            ('stock_alert_threshold', 'INTEGER NOT NULL DEFAULT 1')]:
+            if field not in medcols:
+                con.execute(f'ALTER TABLE medicines ADD COLUMN {field} {definition}')
+        for field, definition in [
+            ('batch', "TEXT NOT NULL DEFAULT ''"),
+            ('initial_quantity', 'INTEGER'),
+            ('remaining_quantity', 'INTEGER'),
+            ('quantity_unit', "TEXT NOT NULL DEFAULT ''"),
+            ('usage_schedule', "TEXT NOT NULL DEFAULT ''"),
+            ('usage_instructions', "TEXT NOT NULL DEFAULT '[]'"),
+            ('usage_custom', "TEXT NOT NULL DEFAULT ''")]:
+            if field not in columns:
+                con.execute(f'ALTER TABLE packages ADD COLUMN {field} {definition}')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_medicines_sukl ON medicines(sukl_code)')
+        con.execute("""CREATE TABLE IF NOT EXISTS app_preferences (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
+        con.execute("""CREATE TABLE IF NOT EXISTS sukl_catalog (
+            sukl_code TEXT PRIMARY KEY, registered_name TEXT NOT NULL,
+            name_suffix TEXT NOT NULL DEFAULT '', active_ingredient TEXT NOT NULL DEFAULT '',
+            atc TEXT NOT NULL DEFAULT '', dosage_form TEXT NOT NULL DEFAULT '',
+            manufacturer TEXT NOT NULL DEFAULT '', registration_number TEXT NOT NULL DEFAULT '',
+            dispensing TEXT NOT NULL DEFAULT '', registration_status TEXT NOT NULL DEFAULT '')""")
+        con.execute("""CREATE TABLE IF NOT EXISTS sukl_catalog_meta (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
         con.execute('CREATE INDEX IF NOT EXISTS idx_medicines_ean ON medicines(ean)')
         # AUTOINCREMENT IDs are never reused.
 
 init_db()
+
+
+def preference(key, default='0'):
+    with db() as con:
+        r = con.execute('SELECT value FROM app_preferences WHERE key=?', (key,)).fetchone()
+        return r['value'] if r else default
+
+
+def valid_sukl(code):
+    return not code or bool(re.fullmatch(r'\d{7}', code))
+
+
+def stock_status(con, mid):
+    med = con.execute('SELECT * FROM medicines WHERE id=?', (mid,)).fetchone()
+    if not med or not med['stock_alert_enabled']:
+        return None
+    packs = con.execute('SELECT remaining_quantity,initial_quantity,quantity_unit FROM packages WHERE medicine_id=? AND discarded_at IS NULL', (mid,)).fetchall()
+    mode = med['stock_alert_mode']
+    if mode == 'units':
+        if any(p['remaining_quantity'] is None for p in packs):
+            return {'unknown': True, 'low': False, 'amount': None, 'mode': mode}
+        units = {p['quantity_unit'] for p in packs}
+        if len(units) != 1 or not units.issubset({'tablety','kapsle','sáčky','čípky','kusy'}):
+            return {'unknown': True, 'low': False, 'amount': None, 'mode': mode}
+        amount = sum(p['remaining_quantity'] for p in packs)
+    else:
+        amount = len(packs)
+    return {'unknown': False, 'low': amount <= med['stock_alert_threshold'], 'amount': amount, 'mode': mode}
 
 
 def protected(f):
@@ -387,18 +449,39 @@ def shopping_sync():
         flash(str(exc) + ' Místní košík zůstal zachován.', 'error')
     return redirect(url_for('shopping_cart'))
 
+def save_medicine_extras(con, mid, form):
+    fields = ('registered_name','name_suffix','package_size','registration_number','dispensing','registration_status')
+    values = [form.get(k,'').strip() for k in fields]
+    enabled = int(form.get('stock_alert_enabled') == '1')
+    mode = form.get('stock_alert_mode','packages')
+    if mode not in ('packages','units'):
+        mode = 'packages'
+    try:
+        threshold = int(form.get('stock_alert_threshold','1'))
+    except ValueError:
+        threshold = 1
+    threshold = min(100000, max(0, threshold))
+    con.execute("""UPDATE medicines SET registered_name=?,name_suffix=?,package_size=?,
+        registration_number=?,dispensing=?,registration_status=?,stock_alert_enabled=?,
+        stock_alert_mode=?,stock_alert_threshold=? WHERE id=?""",
+        (*values,enabled,mode,threshold,mid))
+
+
 @app.route('/medicines/new', methods=['GET', 'POST'])
 @protected
 def medicine_new():
     loc_id = request.values.get('location_id', type=int)
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
-        if not name:
+        if not valid_sukl(request.form.get('sukl_code','').strip()):
+            flash('Kód SÚKL musí obsahovat přesně sedm číslic.', 'error')
+        elif not name:
             flash('Zadejte název léku.', 'error')
         else:
             with db() as con:
                 cur = con.execute('INSERT INTO medicines(name,ean,notes,dosage_form,active_ingredient,manufacturer,sukl_code,atc,description) VALUES(?,?,?,?,?,?,?,?,?)', (name, *(request.form.get(k,'').strip() for k in ('ean','notes','dosage_form','active_ingredient','manufacturer','sukl_code','atc','description'))))
                 mid = cur.lastrowid
+                save_medicine_extras(con, mid, request.form)
             return redirect(url_for('medicine_detail', mid=mid, location_id=loc_id) if loc_id else url_for('medicine_detail', mid=mid))
     return render_template('medicine_form.html', m=None, loc_id=loc_id)
 
@@ -414,10 +497,13 @@ def medicine_edit(mid):
             abort(404)
         if request.method == 'POST':
             name = request.form.get('name', '').strip()
-            if name:
+            if name and not valid_sukl(request.form.get('sukl_code','').strip()):
+                flash('Kód SÚKL musí obsahovat přesně sedm číslic.', 'error')
+            elif name:
                 con.execute('UPDATE medicines SET name=?,ean=?,notes=?,dosage_form=?,active_ingredient=?,manufacturer=?,sukl_code=?,atc=?,description=? WHERE id=?', (name, *(request.form.get(k,'').strip() for k in ('ean','notes','dosage_form','active_ingredient','manufacturer','sukl_code','atc','description')), mid))
+                save_medicine_extras(con, mid, request.form)
                 return redirect(url_for('medicine_detail', mid=mid, location_id=loc_id) if loc_id else url_for('medicine_detail', mid=mid))
-            flash('Zadejte název léku.', 'error')
+            flash('Zadejte název léku nebo opravte kód SÚKL.', 'error')
     return render_template('medicine_form.html', m=m, loc_id=loc_id)
 
 @app.post('/medicines/<int:mid>/delete')
@@ -446,7 +532,14 @@ def medicine_detail(mid):
     packages = sorted(packages, key=lambda p: (0 if expiry_state(p['expiry'])[1] == 'expired' else 1, p['expiry'] or '9999', p['id']))
     active = [p for p in packages if not loc or p['location_id'] == loc_id]
     other = [p for p in packages if loc and p['location_id'] != loc_id]
-    return render_template('medicine_detail.html', m=m, loc=loc, active=active, other=other)
+    with db() as con:
+        stock = stock_status(con, mid)
+    with db() as con:
+        in_cart = bool(con.execute('SELECT 1 FROM shopping_items WHERE medicine_id=?',(mid,)).fetchone())
+    tab = request.args.get('tab', 'udaje')
+    if tab not in ('udaje', 'dokumenty', 'baleni', 'poznamky'):
+        tab = 'udaje'
+    return render_template('medicine_detail.html', m=m, loc=loc, active=active, other=other, stock=stock, in_cart=in_cart, tab=tab)
 
 @app.route('/medicines/<int:mid>/packages/new', methods=['GET', 'POST'])
 @protected
@@ -534,10 +627,38 @@ def package_detail(pid):
                     return redirect(url_for('package_detail', pid=pid, location_id=loc_id) if loc_id else url_for('package_detail', pid=pid))
             opened = request.form.get('is_opened') == '1'
             opened_at = (p['opened_at'] or datetime.now().isoformat(timespec='seconds')) if opened else None
-            con.execute('UPDATE packages SET location_id=?,expiry=?,notes=?,is_opened=?,opened_at=? WHERE id=?', (chosen, expiry, request.form.get('notes', '').strip(), int(opened), opened_at, pid))
+            initial, remaining, unit = p['initial_quantity'], p['remaining_quantity'], p['quantity_unit']
+            if preference('detailed_consumption') == '1':
+                raw_initial = request.form.get('initial_quantity', '').strip()
+                raw_remaining = request.form.get('remaining_quantity', '').strip()
+                if raw_initial or raw_remaining:
+                    try:
+                        initial = int(raw_initial)
+                        remaining = int(raw_remaining)
+                        if not (0 <= remaining <= initial <= 100000):
+                            raise ValueError()
+                    except ValueError:
+                        flash('Počty musí být celá nezáporná čísla a zbývající počet nesmí překročit počáteční.', 'error')
+                        return redirect(url_for('package_detail', pid=pid))
+                    unit = request.form.get('quantity_unit','')
+                    if unit not in ('tablety','kapsle','sáčky','čípky','kusy'):
+                        flash('Vyberte platnou kusovou jednotku.', 'error')
+                        return redirect(url_for('package_detail', pid=pid))
+            instructions = [x for x in request.form.getlist('usage_instructions') if x in
+                            ('Po jídle','Před jídlem','Před spaním','Zapít vodou','Užívat po dobu 7 dnů')]
+            discarded = datetime.now().isoformat(timespec='seconds') if remaining == 0 and initial is not None else None
+            con.execute('''UPDATE packages SET location_id=?,expiry=?,notes=?,is_opened=?,opened_at=?,
+                batch=?,initial_quantity=?,remaining_quantity=?,quantity_unit=?,usage_schedule=?,
+                usage_instructions=?,usage_custom=?,discarded_at=COALESCE(?,discarded_at)
+                WHERE id=?''', (chosen,expiry,request.form.get('notes','').strip(),int(opened),opened_at,
+                request.form.get('batch','').strip(),initial,remaining,unit,
+                request.form.get('usage_schedule','').strip(),json.dumps(instructions,ensure_ascii=False),
+                request.form.get('usage_custom','').strip(),discarded,pid))
+            if discarded:
+                flash('Spotřebované balení bylo automaticky archivováno.', 'ok')
             flash('Balení bylo upraveno.', 'ok')
             return redirect(url_for('medicine_detail', mid=p['medicine_id'], location_id=loc_id) if loc_id else url_for('medicine_detail', mid=p['medicine_id']))
-    return render_template('package_detail.html', p=p, locations=locations, loc_id=loc_id)
+    return render_template('package_detail.html', p=p, locations=locations, loc_id=loc_id, detailed=preference('detailed_consumption') == '1', usage_selected=json.loads(p['usage_instructions'] or '[]'))
 
 @app.post('/packages/<int:pid>/open')
 @protected
@@ -765,7 +886,169 @@ def staged_rows():
 @app.get('/settings')
 @protected
 def settings():
-    return render_template('settings.html')
+    return render_template('settings.html', detailed=preference('detailed_consumption') == '1')
+
+@app.post('/settings/consumption')
+@protected
+def save_consumption_setting():
+    with db() as con:
+        con.execute('INSERT OR REPLACE INTO app_preferences(key,value) VALUES(?,?)',
+                    ('detailed_consumption', '1' if request.form.get('enabled') == '1' else '0'))
+    flash('Nastavení evidence spotřeby bylo uloženo.', 'ok')
+    return redirect(url_for('settings'))
+
+
+
+# The source catalogue is kept separate from user-owned medicines and packages.
+# Import is opt-in while the upstream DLP CSV schema is being validated.
+SUKL_FIELDS = {
+    'sukl_code': ('kod_sukl', 'kod_suklu', 'sukl_kod', 'sukl_code', 'kod', 'code'),
+    'registered_name': ('nazev', 'nazev_pripravku', 'nazev_lp', 'registered_name'),
+    'name_suffix': ('doplnek_nazvu', 'doplnek', 'name_suffix'),
+    'active_ingredient': ('leciva_latka', 'ucinna_latka', 'active_ingredient'),
+    'atc': ('atc', 'atc_kod'),
+    'dosage_form': ('lekova_forma', 'forma', 'dosage_form'),
+    'manufacturer': ('drzitel', 'drzitel_registrace', 'manufacturer'),
+    'registration_number': ('registracni_cislo', 'reg_cislo', 'registration_number'),
+    'dispensing': ('zpusob_vydeje', 'vydej', 'dispensing'),
+    'registration_status': ('stav_registrace', 'registration_status'),
+}
+
+def sukl_normalize_header(value):
+    import unicodedata
+    value = unicodedata.normalize('NFKD', str(value).lower())
+    value = ''.join(c for c in value if not unicodedata.combining(c))
+    return re.sub(r'[^a-z0-9]+', '_', value).strip('_')
+
+def sukl_parse_csv(raw):
+    if len(raw) > 32 * 1024 * 1024:
+        raise ValueError('CSV překračuje povolenou velikost 32 MB.')
+    decoded = None
+    for encoding in ('utf-8-sig', 'cp1250'):
+        try:
+            decoded = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            pass
+    if decoded is None:
+        raise ValueError('Nepodporované kódování CSV.')
+    sample = decoded[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=';,\t|')
+        delim = dialect.delimiter
+    except csv.Error:
+        delim = ';'
+    reader = csv.DictReader(io.StringIO(decoded), delimiter=delim)
+    if not reader.fieldnames:
+        raise ValueError('CSV nemá záhlaví.')
+    cols = {sukl_normalize_header(h): h for h in reader.fieldnames if h}
+    mapping = {field: next((cols[x] for x in aliases if x in cols), None)
+               for field, aliases in SUKL_FIELDS.items()}
+    if not mapping['sukl_code'] or not mapping['registered_name']:
+        raise ValueError('CSV nemá rozpoznané sloupce kódu SÚKL a názvu. Import nebyl proveden.')
+    result = {}
+    for row in reader:
+        code = (row.get(mapping['sukl_code']) or '').strip()
+        name = (row.get(mapping['registered_name']) or '').strip()
+        if not re.fullmatch(r'\d{7}', code) or not name:
+            continue
+        result[code] = tuple((row.get(mapping[k]) or '').strip()[:500] if mapping[k] else '' for k in SUKL_FIELDS)
+        if len(result) > 100000:
+            raise ValueError('Překročen maximální počet záznamů.')
+    if not result:
+        raise ValueError('Nenalezeny žádné platné záznamy SÚKL.')
+    return result
+
+def sukl_read_upload(upload):
+    raw = upload.read(32 * 1024 * 1024 + 1)
+    if len(raw) > 32 * 1024 * 1024:
+        raise ValueError('Soubor je příliš velký (max. 32 MB).')
+    if upload.filename.lower().endswith('.csv'):
+        return sukl_parse_csv(raw)
+    if not upload.filename.lower().endswith('.zip'):
+        raise ValueError('Vyberte ZIP nebo CSV.')
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        candidates = [info for info in archive.infolist() if info.filename.lower().endswith('.csv') and not info.is_dir() and info.file_size <= 32 * 1024 * 1024]
+        if not candidates:
+            raise ValueError('Archiv neobsahuje podporované CSV.')
+        # Never extract paths to disk; select CSV by verified header instead.
+        for info in candidates[:30]:
+            with archive.open(info) as stream:
+                payload = stream.read(32 * 1024 * 1024 + 1)
+            try:
+                return sukl_parse_csv(payload)
+            except ValueError:
+                continue
+    raise ValueError('V ZIP nebylo nalezeno CSV se sloupci SÚKL kód a název.')
+
+@app.route('/settings/sukl', methods=['GET', 'POST'])
+@protected
+def sukl_settings():
+    if request.method == 'POST':
+        try:
+            upload = request.files.get('catalog_file')
+            if not upload or not upload.filename:
+                raise ValueError('Vyberte soubor ZIP nebo CSV.')
+            records = sukl_read_upload(upload)
+            with db() as con:
+                con.execute('CREATE TEMP TABLE sukl_stage AS SELECT * FROM sukl_catalog WHERE 0')
+                con.executemany('INSERT INTO sukl_stage VALUES (?,?,?,?,?,?,?,?,?,?)', records.values())
+                con.execute('DELETE FROM sukl_catalog')
+                con.execute('INSERT INTO sukl_catalog SELECT * FROM sukl_stage')
+                con.execute('INSERT OR REPLACE INTO sukl_catalog_meta(key,value) VALUES (?,?)', ('updated_at',datetime.now().isoformat(timespec='seconds')))
+                con.execute('INSERT OR REPLACE INTO sukl_catalog_meta(key,value) VALUES (?,?)', ('source_filename',secure_filename(upload.filename)))
+            flash(f'Načteno {len(records)} záznamů SÚKL. Uživatelská evidence zůstala beze změny.', 'ok')
+        except (ValueError, zipfile.BadZipFile, sqlite3.Error) as exc:
+            flash(f'Import SÚKL se nezdařil: {exc}', 'error')
+        return redirect(url_for('sukl_settings'))
+    with db() as con:
+        count = con.execute('SELECT COUNT(*) FROM sukl_catalog').fetchone()[0]
+        meta = dict(con.execute('SELECT key,value FROM sukl_catalog_meta').fetchall())
+    return render_template('sukl_catalog.html', count=count, meta=meta)
+
+@app.route('/import/ean', methods=['GET', 'POST'])
+@protected
+def import_ean():
+    code = (request.form.get('ean') if request.method == 'POST' else request.args.get('ean', '')) or ''
+    code = code.strip()
+    match = None
+    error = None
+    if code:
+        if not re.fullmatch(r'\d{8}|\d{12,14}', code):
+            error = 'Zadejte EAN/GTIN o délce 8, 12, 13 nebo 14 číslic.'
+        else:
+            with db() as con:
+                match = con.execute('SELECT * FROM medicines WHERE ean=? ORDER BY id LIMIT 1', (code,)).fetchone()
+    return render_template('ean_import.html', code=code, match=match, error=error)
+
+@app.get('/sukl/search')
+@protected
+def sukl_search():
+    q = request.args.get('q', '').strip()[:100]
+    rows = []
+    if len(q) >= 2:
+        with db() as con:
+            rows = con.execute('''SELECT * FROM sukl_catalog WHERE sukl_code = ? OR registered_name LIKE ? ESCAPE '\\'
+                                  ORDER BY CASE WHEN sukl_code=? THEN 0 ELSE 1 END, registered_name LIMIT 50''',
+                               (q, '%' + q.replace('%','\\%').replace('_','\\_') + '%', q)).fetchall()
+    return render_template('sukl_search.html', rows=rows, q=q, mid=request.args.get('mid', type=int))
+
+@app.post('/medicines/<int:mid>/sukl-link')
+@protected
+def sukl_link(mid):
+    code = request.form.get('sukl_code', '').strip()
+    with db() as con:
+        med = con.execute('SELECT id FROM medicines WHERE id=?', (mid,)).fetchone()
+        record = con.execute('SELECT * FROM sukl_catalog WHERE sukl_code=?', (code,)).fetchone()
+        if not med or not record:
+            abort(404)
+        # Preserve the user's original name, notes, EAN and every package.
+        con.execute('''UPDATE medicines SET sukl_code=?,registered_name=?,name_suffix=?,
+                       active_ingredient=?,atc=?,dosage_form=?,manufacturer=?,
+                       registration_number=?,dispensing=?,registration_status=? WHERE id=?''',
+                    tuple(record[k] for k in SUKL_FIELDS) + (mid,))
+    flash('Oficiální údaje SÚKL byly přiřazeny. Uživatelské údaje a balení zůstaly zachovány.', 'ok')
+    return redirect(url_for('medicine_detail', mid=mid))
 
 @app.route('/settings/import',methods=['GET','POST'])
 @protected

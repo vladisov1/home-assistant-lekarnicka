@@ -1,0 +1,5 @@
+{% extends 'base.html' %}{% block title %}Import podle EAN – Lékárnička{% endblock %}{% block content %}
+<div class="titlebar"><div><div class="eyebrow">IDENTIFIKACE PŘÍPRAVKU</div><h1>Import podle EAN / GTIN</h1></div></div>
+<section class="panel narrow"><form method="get"><label>Čárový kód (8, 12, 13 nebo 14 číslic)<input name="ean" value="{{code}}" inputmode="numeric" autocomplete="off" required autofocus></label><button>Vyhledat</button></form>
+{% if error %}<p class="bad">{{error}}</p>{% elif match %}<h2>{{match.name}}</h2><p>EAN: {{match.ean}} · SÚKL: {{match.sukl_code or 'nepřiřazen'}}</p><a class="btn" href="{{url_for('package_new',mid=match.id)}}">Přidat fyzické balení</a><a class="btn secondary" href="{{url_for('medicine_detail',mid=match.id)}}">Zobrazit lék</a>
+{% elif code %}<p>EAN nebyl nalezen v místním katalogu. Nelze bezpečně určit léčivo pouze z čísla. Pokračujte založením nového záznamu a ověřením údajů.</p><a class="btn secondary" href="{{url_for('medicine_new')}}">Nový lék</a>{% endif %}</section>{% endblock %}
