@@ -1,5 +1,5 @@
 name: "Lékárnička"
-version: "0.4.2"
+version: "0.4.3-rc1"
 slug: "lekarnicka"
 description: "Evidence léků, jednotlivých balení a úložných krabic"
 url: "https://github.com/vladisov1/home-assistant-lekarnicka"

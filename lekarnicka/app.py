@@ -88,6 +88,11 @@ def init_db():
         shopping_columns = {r['name'] for r in con.execute('PRAGMA table_info(shopping_items)')}
         if 'quantity' not in shopping_columns:
             con.execute('ALTER TABLE shopping_items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1')
+        medcols = {r['name'] for r in con.execute('PRAGMA table_info(medicines)')}
+        for field in ('ean','dosage_form','active_ingredient','manufacturer','sukl_code','atc','description'):
+            if field not in medcols:
+                con.execute(f"ALTER TABLE medicines ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
+        con.execute('CREATE INDEX IF NOT EXISTS idx_medicines_ean ON medicines(ean)')
         # AUTOINCREMENT IDs are never reused.
 
 init_db()
@@ -192,9 +197,10 @@ def get_location(con, location_id):
 def index():
     location_id = request.args.get('location_id', type=int)
     search = request.args.get('q', '').strip()
+    selected_id = request.args.get('selected', type=int)
     with db() as con:
         loc = get_location(con, location_id)
-        medicines = con.execute('SELECT * FROM medicines WHERE name LIKE ? OR CAST(id AS TEXT)=? ORDER BY name COLLATE NOCASE', ('%' + search + '%', search)).fetchall()
+        medicines = con.execute('SELECT * FROM medicines WHERE name LIKE ? OR ean LIKE ? OR active_ingredient LIKE ? OR sukl_code LIKE ? OR CAST(id AS TEXT)=? ORDER BY name COLLATE NOCASE', tuple(['%' + search + '%']*4 + [search])).fetchall()
         rows = []
         for m in medicines:
             packages = con.execute('SELECT * FROM packages WHERE medicine_id=? AND discarded_at IS NULL' + (' AND location_id=?' if loc else ''), (m['id'], location_id) if loc else (m['id'],)).fetchall()
@@ -205,9 +211,34 @@ def index():
             rows.append(dict(m=m, count=len(packages), usable=states.count('ok') + states.count('soon'), expired=states.count('expired'), soon=states.count('soon'), unknown=states.count('unknown'), box_counts=box_counts))
     with db() as con:
         shopping = {r['medicine_id'] for r in con.execute('SELECT medicine_id FROM shopping_items')}
-    return render_template('index.html', rows=rows, loc=loc, search=search, shopping=shopping)
+    selected = None
+    if selected_id:
+        with db() as con:
+            medicine = con.execute('SELECT * FROM medicines WHERE id=?', (selected_id,)).fetchone()
+            if medicine and any(r['m']['id'] == selected_id for r in rows):
+                packages = con.execute('SELECT p.*,l.code FROM packages p JOIN locations l ON l.id=p.location_id WHERE p.medicine_id=? AND p.discarded_at IS NULL ORDER BY p.expiry,p.id', (selected_id,)).fetchall()
+                selected = {'medicine': medicine, 'packages': packages}
+    return render_template('index.html', rows=rows, loc=loc, search=search, shopping=shopping, selected=selected)
 
 
+
+
+@app.get('/expirace')
+@protected
+def expirations():
+    with db() as con:
+        items = con.execute('SELECT p.*,m.name,l.code FROM packages p JOIN medicines m ON m.id=p.medicine_id JOIN locations l ON l.id=p.location_id WHERE p.discarded_at IS NULL AND p.expiry IS NOT NULL ORDER BY p.expiry,p.id').fetchall()
+    groups={'expired':[], 'week':[], 'month':[]}
+    for p in items:
+        try:
+            y,m=map(int,p['expiry'].split('-'))
+            remaining=(date(y,m,calendar.monthrange(y,m)[1])-date.today()).days
+        except (ValueError,TypeError):
+            continue
+        group='expired' if remaining<0 else 'week' if remaining<=7 else 'month' if remaining<=30 else None
+        if group:
+            groups[group].append({'p':p,'days':remaining})
+    return render_template('expirations.html',groups=groups)
 
 @app.get('/shopping')
 @protected
@@ -245,6 +276,19 @@ def ha_todo_items():
     entity = cfg.get('todo_entity', 'todo.leky').strip()
     if not token or not entity.startswith('todo.'):
         raise ValueError('Není nastaven přístup k seznamu Home Assistantu.')
+    state_url = 'http://supervisor/core/api/states/' + entity
+    state_req = urllib.request.Request(state_url, headers={'Authorization':'Bearer '+token})
+    try:
+        with urllib.request.urlopen(state_req, timeout=8) as response:
+            state = json.load(response)
+        if not isinstance(state, dict) or state.get('entity_id') != entity:
+            raise ValueError('Vybraná entita nákupního seznamu není platná.')
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise ValueError('Seznam '+entity+' v Home Assistantu neexistuje. V Nastavení → Zařízení a služby → Integrace přidejte Místní seznam úkolů s názvem Léky - nákupní seznam a nastavte jeho skutečné ID entity v konfiguraci doplňku. Ikonu mdi:cart lze upravit v sekci Entity.') from exc
+        raise ValueError('Nelze ověřit seznam Home Assistantu (HTTP '+str(exc.code)+').') from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ValueError('Nelze ověřit existenci seznamu Home Assistantu.') from exc
     endpoint = 'http://supervisor/core/api/services/todo/get_items?return_response'
     payload = json.dumps({'entity_id': entity}).encode('utf-8')
     req = urllib.request.Request(endpoint, data=payload, headers={
@@ -320,7 +364,12 @@ def shopping_sync():
             try:
                 if name.casefold() not in existing:
                     ha_todo('add_item', name)
-                    existing.add(name.casefold())
+                    # A successful HTTP response alone does not prove the
+                    # item was persisted. Verify before removing local data.
+                    confirmed = ha_todo_items()
+                    if name.casefold() not in confirmed:
+                        raise ValueError('Home Assistant nepotvrdil uložení položky; položka zůstává v košíku.')
+                    existing = confirmed
                     added += 1
                 # Existing entry is already confirmed in HA; remove only this
                 # unchanged local cart row, never a newly edited row.
@@ -348,7 +397,7 @@ def medicine_new():
             flash('Zadejte název léku.', 'error')
         else:
             with db() as con:
-                cur = con.execute('INSERT INTO medicines(name,ean,notes) VALUES(?,?,?)', (name, request.form.get('ean', '').strip(), request.form.get('notes', '').strip()))
+                cur = con.execute('INSERT INTO medicines(name,ean,notes,dosage_form,active_ingredient,manufacturer,sukl_code,atc,description) VALUES(?,?,?,?,?,?,?,?,?)', (name, *(request.form.get(k,'').strip() for k in ('ean','notes','dosage_form','active_ingredient','manufacturer','sukl_code','atc','description'))))
                 mid = cur.lastrowid
             return redirect(url_for('medicine_detail', mid=mid, location_id=loc_id) if loc_id else url_for('medicine_detail', mid=mid))
     return render_template('medicine_form.html', m=None, loc_id=loc_id)
@@ -366,7 +415,7 @@ def medicine_edit(mid):
         if request.method == 'POST':
             name = request.form.get('name', '').strip()
             if name:
-                con.execute('UPDATE medicines SET name=?,ean=?,notes=? WHERE id=?', (name, request.form.get('ean', '').strip(), request.form.get('notes', '').strip(), mid))
+                con.execute('UPDATE medicines SET name=?,ean=?,notes=?,dosage_form=?,active_ingredient=?,manufacturer=?,sukl_code=?,atc=?,description=? WHERE id=?', (name, *(request.form.get(k,'').strip() for k in ('ean','notes','dosage_form','active_ingredient','manufacturer','sukl_code','atc','description')), mid))
                 return redirect(url_for('medicine_detail', mid=mid, location_id=loc_id) if loc_id else url_for('medicine_detail', mid=mid))
             flash('Zadejte název léku.', 'error')
     return render_template('medicine_form.html', m=m, loc_id=loc_id)
@@ -483,7 +532,9 @@ def package_detail(pid):
                 except ValueError:
                     flash('Neplatná expirace. Zadejte MM/RRRR.', 'error')
                     return redirect(url_for('package_detail', pid=pid, location_id=loc_id) if loc_id else url_for('package_detail', pid=pid))
-            con.execute('UPDATE packages SET location_id=?,expiry=?,notes=? WHERE id=?', (chosen, expiry, request.form.get('notes', '').strip(), pid))
+            opened = request.form.get('is_opened') == '1'
+            opened_at = (p['opened_at'] or datetime.now().isoformat(timespec='seconds')) if opened else None
+            con.execute('UPDATE packages SET location_id=?,expiry=?,notes=?,is_opened=?,opened_at=? WHERE id=?', (chosen, expiry, request.form.get('notes', '').strip(), int(opened), opened_at, pid))
             flash('Balení bylo upraveno.', 'ok')
             return redirect(url_for('medicine_detail', mid=p['medicine_id'], location_id=loc_id) if loc_id else url_for('medicine_detail', mid=p['medicine_id']))
     return render_template('package_detail.html', p=p, locations=locations, loc_id=loc_id)
@@ -565,11 +616,62 @@ def location_delete(lid):
 @protected
 def package_label(pid):
     with db() as con:
-        p = con.execute('SELECT p.*,m.name FROM packages p JOIN medicines m ON m.id=p.medicine_id WHERE p.id=? AND p.discarded_at IS NULL', (pid,)).fetchone()
+        p = con.execute('SELECT p.*,m.name,l.code AS location_code FROM packages p JOIN medicines m ON m.id=p.medicine_id LEFT JOIN locations l ON l.id=p.location_id WHERE p.id=? AND p.discarded_at IS NULL', (pid,)).fetchone()
         if not p:
             abort(404)
     target = request.host_url.rstrip('/') + url_for('package_detail', pid=pid)
-    return render_template('label.html', p=p, target=target)
+    profiles = {
+        'brother54': {'label':'Brother 54 × 17 mm', 'width':54, 'height':17, 'qr':14, 'font':7},
+        'brother62': {'label':'Brother 62 × 29 mm', 'width':62, 'height':29, 'qr':23, 'font':10},
+        'small': {'label':'Univerzální 50 × 25 mm', 'width':50, 'height':25, 'qr':19, 'font':9},
+        'a4': {'label':'A4 – arch štítků', 'width':63.5, 'height':38.1, 'qr':24, 'font':10},
+        'custom': {'label':'Vlastní rozměr', 'width':54, 'height':17, 'qr':14, 'font':7},
+    }
+    profile = request.args.get('profile', 'brother54')
+    if profile not in profiles:
+        profile = 'brother54'
+    cfg = dict(profiles[profile])
+    if profile == 'custom':
+        for key, lo, hi in [('width',25,210), ('height',17,297)]:
+            raw = request.args.get(key, '')
+            try:
+                val = float(raw)
+                if not lo <= val <= hi:
+                    raise ValueError()
+                cfg[key] = round(val, 1)
+            except (ValueError, TypeError):
+                pass
+        cfg['qr'] = min(cfg['height'] - 3, cfg['width'] * .42, 27)
+    cfg['qr'] = min(cfg['qr'], cfg['height']-2)
+    a4 = profile == 'a4'
+    def bounded_int(key, default, low, high):
+        try: return max(low, min(high, int(request.args.get(key, default))))
+        except (TypeError, ValueError): return default
+    def bounded_mm(key, default, low, high):
+        try: return max(low, min(high, round(float(request.args.get(key, default)), 1)))
+        except (TypeError, ValueError): return default
+    sheet = {'cols':bounded_int('cols',3,1,6), 'rows':bounded_int('rows',7,1,15),
+             'gap_x':bounded_mm('gap_x',2.5,0,20), 'gap_y':bounded_mm('gap_y',0,0,20),
+             'margin_x':bounded_mm('margin_x',7,0,30), 'margin_y':bounded_mm('margin_y',12,0,30)}
+    if a4:
+        sheet['cols'] = min(sheet['cols'], 6)
+        if sheet['cols']*cfg['width']+(sheet['cols']-1)*sheet['gap_x']+2*sheet['margin_x']>210 or sheet['rows']*cfg['height']+(sheet['rows']-1)*sheet['gap_y']+2*sheet['margin_y']>297:
+            flash('Rozměry archu přesahují A4; upravte počet řádků, sloupců, mezery nebo okraje.', 'error')
+    # Presentation-only options: do not change QR payload or package records.
+    show_name = request.args.getlist('name')[-1] == '1' if request.args.getlist('name') else True
+    show_expiry = request.args.getlist('expiry')[-1] == '1' if request.args.getlist('expiry') else True
+    show_id = request.args.getlist('id')[-1] == '1' if request.args.getlist('id') else True
+    show_location = request.args.getlist('location')[-1] == '1' if request.args.getlist('location') else False
+    copies_raw = request.args.get('copies', '1')
+    try:
+        copies = max(1, min(120 if a4 else 12, int(copies_raw)))
+    except (TypeError, ValueError):
+        copies = 1
+    sheet_capacity = sheet['cols'] * sheet['rows'] if a4 else 1
+    page_count = (copies + sheet_capacity - 1) // sheet_capacity
+    return render_template('label.html', p=p, target=target, profile=profile,
+                           profiles=profiles, cfg=cfg, show_name=show_name,
+                           show_expiry=show_expiry, show_id=show_id, show_location=show_location, copies=copies, a4=a4, sheet=sheet, sheet_capacity=sheet_capacity, page_count=page_count)
 
 @app.get('/qr')
 @protected
@@ -578,11 +680,12 @@ def qr():
     parsed = urlparse(target)
     if parsed.scheme not in ('http', 'https') or parsed.netloc != request.host:
         abort(400)
-    image = qrcode.make(target)
+    from qrcode.image.svg import SvgPathImage
+    image = qrcode.make(target, image_factory=SvgPathImage, border=4, box_size=10, error_correction=qrcode.constants.ERROR_CORRECT_M)
     buffer = io.BytesIO()
-    image.save(buffer, format='PNG')
+    image.save(buffer)
     buffer.seek(0)
-    return send_file(buffer, mimetype='image/png')
+    return send_file(buffer, mimetype='image/svg+xml')
 
 
 BACKUPS = Path(os.path.dirname(DB)) / 'backups'
@@ -703,14 +806,14 @@ def ai_import():
         flash('Nejdříve nastavte OpenAI API klíč v konfiguraci doplňku.','error')
         return redirect(url_for('import_page'))
     files=request.files.getlist('photos')
-    if not 1<=len(files)<=6:
-        flash('Nahrajte 1 až 6 fotografií.','error');return redirect(url_for('import_page'))
+    if not 1<=len(files)<=2:
+        flash('Nahrajte 1 až 2 fotografie jednoho balení.','error');return redirect(url_for('import_page'))
     content=[{'type':'text','text':('Rozpoznej léčiva z fotografií. Vrať POUZE JSON objekt s polem rows. '
       'Každý záznam: name (jen obchodní název a síla, bez lékové formy), expiry (YYYY-MM nebo null), '
       'count (počet FYZICKÝCH krabiček, výchozí 1), status (otevrene/nerozbalene), ean (nepovinné), notes (nepovinné). '
       'Počet sáčků, tablet či dávek uvnitř balení NIKDY není počet fyzických krabiček. ' 'U fotografie jedné krabičky vrať jeden záznam s count=1. ' 'Lékovou formu dej do notes, ne do name. Nedomýšlej nečitelné datum ani identitu léku. '
       'Neshody či nejistoty popiš v notes, nevyplňuj odhadnuté hodnoty. '
-      'Doplňující pokyny: '+request.form.get('prompt','')[:3000])}]
+      'Přiložené nejvýše dvě fotografie zachycují JEDNO fyzické balení (název/EAN a expiraci). Vrať právě jeden řádek. ' 'Pokud je EAN viditelný, přesně jej opiš, neodhaduj; nepředstírej internetové ověření ani externí databázové vyhledání. ' 'Doplňující pokyny: '+request.form.get('prompt','')[:3000])}]
     try:
         for f in files:
             data=f.read(5*1024*1024+1)
@@ -746,7 +849,7 @@ def ai_import():
             flash('AI nabídla více různých balení než bylo fotografií. Z bezpečnostních důvodů byl počet omezen; zkontrolujte náhled a případné další balení přidejte ručně.', 'error')
         if not unique_rows:
             raise ValueError('Na fotografiích nebylo rozpoznáno žádné balení.')
-        stage_rows(unique_rows)
+        stage_rows(unique_rows[:1])
         return redirect(url_for('import_review'))
     except (ValueError,KeyError,IndexError,TypeError,urllib.error.URLError,TimeoutError,json.JSONDecodeError) as e:
         flash('AI rozpoznání se nezdařilo: '+str(e)[:300],'error')

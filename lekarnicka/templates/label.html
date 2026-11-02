@@ -1,1 +1,47 @@
-{% extends 'base.html' %}{% block content %}<h1>QR štítek – balení {{p.id}}</h1><p>Štítek pro Brother DK-11204 (54 × 17 mm). V tiskovém dialogu vyber správnou tiskárnu a formát, měřítko dle tiskárny (ověřte náhled).</p><div class="printlabel"><img src="{{url_for('qr',url=target)}}" alt="QR"><div class="labeltext"><strong>{{p.name}}</strong><span>EXP: {{pretty_exp(p.expiry)}}</span><span>ID: {{p.id}}</span></div></div><div class="actions noprint"><button onclick="window.print()">Tisknout</button><a class="btn secondary" href="{{url_for('medicine_detail',mid=p.medicine_id)}}">Zavřít</a></div>{% endblock %}
+{% extends 'base.html' %}{% block title %}Tisk štítku – {{p.name}}{% endblock %}{% block content %}
+<div class="label-tools noprint">
+  <h1>Tisk štítku – {{p.name}}</h1>
+  <p>Vyberte tiskový profil a obsah štítku. Náhled níže odpovídá zvoleným rozměrům v milimetrech; výsledný tisk závisí také na ovladači tiskárny. Nastavte měřítko 100 %.</p>
+  <form method="get" class="panel label-settings" id="label-form">
+    <label>Profil štítku<select name="profile" id="label-profile" onchange="this.form.submit()">{% for key,item in profiles.items() %}<option value="{{key}}" {% if key==profile %}selected{% endif %}>{{item.label}}</option>{% endfor %}</select></label>
+    {% if profile=='a4' %}<div class="sheet-controls"><strong>Rozložení archu A4</strong>{% for field,label,value in [('cols','Sloupce',sheet.cols),('rows','Řádky',sheet.rows),('gap_x','Mezera vodorovně (mm)',sheet.gap_x),('gap_y','Mezera svisle (mm)',sheet.gap_y),('margin_x','Okraj vlevo/vpravo (mm)',sheet.margin_x),('margin_y','Okraj nahoře/dole (mm)',sheet.margin_y)] %}<label>{{label}}<input type="number" name="{{field}}" min="0" max="30" step="{{'1' if field in ('cols','rows') else '0.5'}}" value="{{value}}"></label>{% endfor %}</div>{% endif %}
+    {% if profile=='custom' %}<label>Šířka (mm)<input type="number" name="width" min="25" max="210" step="0.5" value="{{cfg.width}}"></label><label>Výška (mm)<input type="number" name="height" min="17" max="297" step="0.5" value="{{cfg.height}}"></label>{% endif %}
+    <label>Počet kopií<input type="number" name="copies" min="1" max="{{120 if a4 else 12}}" step="1" value="{{copies}}"></label>
+    <div class="label-options"><strong>Obsah štítku</strong>
+      <label><input type="hidden" name="name" value="0"><input type="checkbox" name="name" value="1" {% if show_name %}checked{% endif %}> Název léku</label>
+      <label><input type="hidden" name="expiry" value="0"><input type="checkbox" name="expiry" value="1" {% if show_expiry %}checked{% endif %}> Expirace</label>
+      <label><input type="hidden" name="id" value="0"><input type="checkbox" name="id" value="1" {% if show_id %}checked{% endif %}> ID balení</label>
+      <label><input type="hidden" name="location" value="0"><input type="checkbox" name="location" value="1" {% if show_location %}checked{% endif %}> Úložná krabice</label>
+      <small>Interní QR kód konkrétního balení je povinnou součástí tohoto profilu.</small>
+    </div>
+    <button type="submit">Aktualizovat náhled</button>
+  </form>
+  <p><strong>Rozměr:</strong> {{cfg.width}} × {{cfg.height}} mm · <strong>QR:</strong> {{cfg.qr}} mm · <strong>Počet:</strong> {{copies}}. Před běžným tiskem ověřte čitelnost na zkušebním štítku.</p>
+</div>
+<style>
+@page {size: {{"A4" if a4 else (cfg.width|string + "mm " + cfg.height|string + "mm")}}; margin:0}
+.printlabel{width:{{cfg.width}}mm!important;height:{{cfg.height}}mm!important}
+.printlabel img{width:{{cfg.qr}}mm!important;height:{{cfg.qr}}mm!important}
+.printlabel .labeltext{font-size:{{cfg.font}}pt!important}
+@media print {
+ html,body,.content{width:{{"210" if a4 else cfg.width}}mm!important;height:auto!important}
+ .printlabel{position:relative!important;left:auto!important;top:auto!important;box-shadow:none!important;border:0!important;break-after:page!important;page-break-after:always!important}
+ .printlabel:last-child{break-after:auto!important;page-break-after:auto!important}
+}
+@media print {
+ .label-preview{display:{{'grid' if a4 else 'block'}}!important;position:static!important;overflow:visible!important}
+ .label-preview .printlabel{position:static!important;left:auto!important;top:auto!important;visibility:visible!important;break-after:{{'auto' if a4 else 'page'}}!important;page-break-after:{{'auto' if a4 else 'always'}}!important}
+ .label-preview .printlabel:last-child{break-after:auto!important;page-break-after:auto!important}
+ .label-preview.sheet-preview{break-after:page!important;page-break-after:always!important;width:210mm!important;min-height:297mm!important;box-sizing:border-box!important;display:grid!important;grid-template-columns:repeat(var(--cols),{{cfg.width}}mm)!important;grid-auto-rows:{{cfg.height}}mm!important;column-gap:var(--gap-x)!important;row-gap:var(--gap-y)!important;padding:var(--margin-y) var(--margin-x)!important;align-content:start!important}
+}
+ .label-preview.sheet-preview:last-of-type{break-after:auto!important;page-break-after:auto!important}
+</style>
+{% for page in range(page_count) %}
+<div class="label-preview {{'sheet-preview' if a4 else ''}}" {% if a4 %}style="--cols:{{sheet.cols}};--gap-x:{{sheet.gap_x}}mm;--gap-y:{{sheet.gap_y}}mm;--margin-x:{{sheet.margin_x}}mm;--margin-y:{{sheet.margin_y}}mm"{% endif %}>
+{% for i in range(page*sheet_capacity, [copies, (page+1)*sheet_capacity]|min) %}
+<div class="printlabel" aria-label="Náhled štítku {{i+1}}"><img src="{{url_for('qr',url=target)}}" alt="QR konkrétního balení"><div class="labeltext">{% if show_name %}<strong>{{p.name}}</strong>{% endif %}{% if show_expiry %}<span>EXP: {{pretty_exp(p.expiry)}}</span>{% endif %}{% if show_id %}<span>ID: {{p.id}}</span>{% endif %}{% if show_location and p.location_code %}<span>Box: {{p.location_code}}</span>{% endif %}</div></div>
+{% endfor %}
+</div>
+{% endfor %}
+<div class="actions noprint label-actions"><button type="button" onclick="window.print()">Tisknout</button><a class="btn secondary" href="{{url_for('medicine_detail',mid=p.medicine_id)}}">Zpět na lék</a></div>
+{% endblock %}

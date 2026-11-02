@@ -1,11 +1,5 @@
-# Lékárnička pro Home Assistant
+# Lékárnička pro Home Assistant — 0.4.3-rc1 (ALPHA)
 
-Vlastní aplikace pro evidenci léků, balení a úložných boxů.
+Testovací kandidát, **nikoliv stabilní vydání**. Viz [návod k testování](NAVOD_TESTOVANI_RC1.md) a [vývojový protokol](TESTOVANI_v0.4.3.md).
 
-## Instalace z repozitáře
-
-⚠️ Projekt ve vývoji – ALPHA verze
-
-Lékárnička pro Home Assistant je aktuálně ve fázi aktivního vývoje a testování. Některé funkce mohou být neúplné nebo se mohou měnit. Aplikace zatím není určena pro běžné produkční používání.
-
-Děkujeme za pochopení. První stabilní verze bude zveřejněna po dokončení funkčního testování.
+Neověřeno v reálné instalaci Home Assistantu. Zálohujte data před aktualizací. Do repozitáře neukládejte databáze, tokeny, hesla ani `options.json`.
