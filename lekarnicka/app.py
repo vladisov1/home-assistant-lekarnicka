@@ -156,9 +156,53 @@ def init_db():
         con.execute("""CREATE TABLE IF NOT EXISTS sukl_catalog_meta (
             key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
         con.execute('CREATE INDEX IF NOT EXISTS idx_medicines_ean ON medicines(ean)')
+        # v0.4.7: immutable public package number and append-only quantity movements.
+        package_cols = {r['name'] for r in con.execute('PRAGMA table_info(packages)')}
+        if 'short_id' not in package_cols:
+            con.execute('ALTER TABLE packages ADD COLUMN short_id INTEGER')
+        con.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_packages_short_id ON packages(short_id)')
+        con.execute('''CREATE TABLE IF NOT EXISTS package_movements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE RESTRICT,
+            medicine_id INTEGER NOT NULL REFERENCES medicines(id) ON DELETE RESTRICT,
+            occurred_at TEXT NOT NULL,
+            delta INTEGER NOT NULL CHECK(delta != 0),
+            balance_after INTEGER NOT NULL CHECK(balance_after >= 0),
+            reason TEXT NOT NULL DEFAULT 'manual'
+        )''')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_movement_medicine_date ON package_movements(medicine_id,occurred_at DESC,id DESC)')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_movement_package_date ON package_movements(package_id,occurred_at DESC,id DESC)')
+        # Existing package IDs are unique AUTOINCREMENT integers; preserve old QR identity
+        # while assigning the permanent short_id to all pre-existing packages.
+        con.execute('UPDATE packages SET short_id=id WHERE short_id IS NULL')
+        con.execute('''CREATE TRIGGER IF NOT EXISTS trg_package_short_id AFTER INSERT ON packages WHEN NEW.short_id IS NULL BEGIN UPDATE packages SET short_id=NEW.id WHERE id=NEW.id; END''')
         # AUTOINCREMENT IDs are never reused.
 
 init_db()
+
+
+def package_code(short_id):
+    return f'BAL-{int(short_id):06d}'
+
+
+def quantity_movement(con, package_id, delta, reason='quick'):
+    """Caller owns an IMMEDIATE transaction; never silently change unknown stock."""
+    p = con.execute('SELECT * FROM packages WHERE id=?', (package_id,)).fetchone()
+    if not p or p['discarded_at'] is not None:
+        raise ValueError('Balení není aktivní.')
+    initial, remaining = p['initial_quantity'], p['remaining_quantity']
+    if initial is None or remaining is None:
+        raise ValueError('U tohoto balení není evidován počet jednotek.')
+    if not isinstance(delta, int) or delta == 0 or remaining + delta < 0 or remaining + delta > initial:
+        raise ValueError('Počet překračuje dostupné množství nebo původní kapacitu.')
+    new = remaining + delta
+    now = datetime.now().isoformat(timespec='microseconds')
+    con.execute('''UPDATE packages SET remaining_quantity=?,is_opened=CASE WHEN ? < 0 THEN 1 ELSE is_opened END,
+        opened_at=CASE WHEN ? < 0 THEN COALESCE(opened_at,?) ELSE opened_at END
+        WHERE id=?''', (new,delta,delta,now,package_id))
+    con.execute('INSERT INTO package_movements(package_id,medicine_id,occurred_at,delta,balance_after,reason) VALUES(?,?,?,?,?,?)',
+                (package_id,p['medicine_id'],now,delta,new,reason))
+    return new
 
 
 def preference(key, default='0'):
@@ -209,7 +253,7 @@ def csrf():
 def globals_():
     with db() as con:
         cart_count = con.execute('SELECT COUNT(*) FROM shopping_items').fetchone()[0]
-    return {'csrf_token': csrf, 'today': date.today(), 'location_context': request.args.get('location_id', type=int), 'password_enabled': bool(password()), 'cart_count': cart_count}
+    return {'csrf_token': csrf, 'today': date.today(), 'location_context': request.args.get('location_id', type=int), 'password_enabled': bool(password()), 'cart_count': cart_count, 'package_code': package_code}
 
 @app.before_request
 def check_csrf():
@@ -309,7 +353,23 @@ def index():
             if medicine and any(r['m']['id'] == selected_id for r in rows):
                 packages = con.execute('SELECT p.*,l.code FROM packages p JOIN locations l ON l.id=p.location_id WHERE p.medicine_id=? AND p.discarded_at IS NULL ORDER BY p.expiry,p.id', (selected_id,)).fetchall()
                 selected = {'medicine': medicine, 'packages': packages}
-    return render_template('index.html', rows=rows, loc=loc, search=search, shopping=shopping, selected=selected)
+    show_movements = bool(selected and request.args.get('movements') == '1')
+    movement_rows = []
+    if show_movements:
+        kind = request.args.get('kind','all')
+        day = request.args.get('day','').strip()
+        amount = request.args.get('amount',type=int)
+        pack_id = request.args.get('package',type=int)
+        conditions = ['pm.medicine_id=?']; args = [selected['medicine']['id']]
+        if kind == 'out': conditions.append('pm.delta<0')
+        elif kind == 'in': conditions.append('pm.delta>0')
+        if day and re.fullmatch(r'\d{4}-\d{2}-\d{2}',day):
+            conditions.append('substr(pm.occurred_at,1,10)=?');args.append(day)
+        if amount and amount>0: conditions.append('ABS(pm.delta)=?');args.append(amount)
+        if pack_id: conditions.append('pm.package_id=?');args.append(pack_id)
+        with db() as con:
+            movement_rows=con.execute('SELECT pm.*,p.short_id,l.code FROM package_movements pm JOIN packages p ON p.id=pm.package_id JOIN locations l ON l.id=p.location_id WHERE '+' AND '.join(conditions)+' ORDER BY pm.occurred_at DESC,pm.id DESC LIMIT 500',args).fetchall()
+    return render_template('index.html', rows=rows, loc=loc, search=search, shopping=shopping, selected=selected, show_movements=show_movements, movement_rows=movement_rows)
 
 
 
@@ -642,6 +702,80 @@ def package_created(mid):
         packages = [con.execute('SELECT * FROM packages WHERE id=? AND medicine_id=?', (pid,mid)).fetchone() for pid in ids]
     return render_template('package_created.html', m=medicine, packages=[x for x in packages if x])
 
+@app.route('/p/<int:short_id>', methods=['GET', 'POST'])
+@protected
+def quick_package(short_id):
+    with db() as con:
+        source = con.execute('''SELECT p.*,m.name,l.code FROM packages p JOIN medicines m ON m.id=p.medicine_id
+            JOIN locations l ON l.id=p.location_id WHERE p.short_id=?''',(short_id,)).fetchone()
+        if not source:
+            abort(404)
+        if source['discarded_at'] is not None:
+            return render_template('quick_package.html', source=source, packs=[], movements=[], mode='inactive', error='Balení již není aktivní.')
+        mode = request.values.get('mode','choose')
+        if mode not in ('choose','take','return','find','inactive'):
+            mode='choose'
+        error=None
+        if request.method=='POST':
+            try:
+                delta_qty=int(request.form.get('quantity','0'))
+                if delta_qty < 1 or delta_qty > 100000:
+                    raise ValueError('Zadejte kladný počet kusů.')
+                action=request.form.get('action')
+                if action not in ('take','return'):
+                    raise ValueError('Neplatná operace.')
+                if action=='return' and request.form.get('confirm')!='yes':
+                    raise ValueError('Vrácení vyžaduje potvrzení cílového balení.')
+                target_id = source['id'] if action=='take' else int(request.form.get('target_id','0'))
+                if action=='return' and not request.form.get('target_id'):
+                    raise ValueError('Vyberte cílové balení.')
+                # Reject cross-drug movement and serialize read/modify/write.
+                con.execute('BEGIN IMMEDIATE')
+                target=con.execute('SELECT * FROM packages WHERE id=? AND medicine_id=?',(target_id,source['medicine_id'])).fetchone()
+                if not target:
+                    raise ValueError('Cílové balení není stejného léku.')
+                new=quantity_movement(con,target_id,-delta_qty if action=='take' else delta_qty, 'qr')
+                con.commit()
+                return render_template('quick_done.html', source=source, target=target, quantity=delta_qty, action=action, balance=new)
+            except (ValueError,TypeError) as exc:
+                con.rollback()
+                error=str(exc)
+                mode='take' if request.form.get('action')=='take' else 'find' if request.form.get('target_id') and str(request.form.get('target_id'))!=str(source['id']) else 'return'
+        packs=con.execute('''SELECT p.*,l.code, (SELECT pm.occurred_at FROM package_movements pm
+            WHERE pm.package_id=p.id AND pm.delta<0 ORDER BY pm.occurred_at DESC,pm.id DESC LIMIT 1) AS last_take_at,
+            (SELECT pm.delta FROM package_movements pm WHERE pm.package_id=p.id AND pm.delta<0
+            ORDER BY pm.occurred_at DESC,pm.id DESC LIMIT 1) AS last_take_qty
+            FROM packages p JOIN locations l ON l.id=p.location_id
+            WHERE p.medicine_id=? AND p.discarded_at IS NULL ORDER BY last_take_at DESC,p.id''',(source['medicine_id'],)).fetchall()
+        movements=con.execute('''SELECT pm.*,p.short_id,l.code FROM package_movements pm
+            JOIN packages p ON p.id=pm.package_id JOIN locations l ON l.id=p.location_id
+            WHERE pm.medicine_id=? ORDER BY pm.occurred_at DESC,pm.id DESC LIMIT 150''',(source['medicine_id'],)).fetchall()
+    return render_template('quick_package.html',source=source,packs=packs,movements=movements,mode=mode,error=error)
+
+
+@app.route('/medicines/<int:mid>/movements',methods=['GET','POST'])
+@protected
+def medicine_movements(mid):
+    with db() as con:
+        med=con.execute('SELECT * FROM medicines WHERE id=?',(mid,)).fetchone()
+        if not med: abort(404)
+        kind=request.args.get('kind','all')
+        pack_id=request.args.get('package',type=int)
+        day=request.args.get('day','').strip()
+        amount=request.args.get('amount',type=int)
+        conditions=['pm.medicine_id=?'];args=[mid]
+        if kind=='out': conditions.append('pm.delta<0')
+        if kind=='in': conditions.append('pm.delta>0')
+        if pack_id: conditions.append('pm.package_id=?');args.append(pack_id)
+        if day and re.fullmatch(r'\d{4}-\d{2}-\d{2}',day): conditions.append('substr(pm.occurred_at,1,10)=?');args.append(day)
+        if amount and amount>0: conditions.append('ABS(pm.delta)=?');args.append(amount)
+        moves=con.execute('''SELECT pm.*,p.short_id,l.code FROM package_movements pm
+            JOIN packages p ON p.id=pm.package_id JOIN locations l ON l.id=p.location_id
+            WHERE '''+' AND '.join(conditions)+' ORDER BY pm.occurred_at DESC,pm.id DESC LIMIT 500',args).fetchall()
+        packs=con.execute('SELECT p.*,l.code FROM packages p JOIN locations l ON l.id=p.location_id WHERE p.medicine_id=? ORDER BY p.id',(mid,)).fetchall()
+    return redirect(url_for('index',selected=mid,movements=1,kind=kind,package=pack_id,day=day,amount=amount))
+
+
 @app.route('/packages/<int:pid>', methods=['GET', 'POST'])
 @protected
 def package_detail(pid):
@@ -680,6 +814,10 @@ def package_detail(pid):
                 except ValueError as exc:
                     flash(str(exc), 'error')
                     return redirect(url_for('package_detail', pid=pid, location_id=loc_id) if loc_id else url_for('package_detail', pid=pid))
+            old_remaining = p['remaining_quantity']
+            if remaining is not None and initial is not None and remaining < initial:
+                opened = True
+                opened_at = opened_at or datetime.now().isoformat(timespec='seconds')
             instructions = [x for x in request.form.getlist('usage_instructions') if x in
                             ('Po jídle','Před jídlem','Před spaním','Zapít vodou','Užívat po dobu 7 dnů')]
             discarded = datetime.now().isoformat(timespec='seconds') if remaining == 0 and initial is not None and initial > 0 else None
@@ -690,6 +828,9 @@ def package_detail(pid):
                 request.form.get('batch','').strip(),initial,remaining,unit,
                 request.form.get('usage_schedule','').strip(),json.dumps(instructions,ensure_ascii=False),
                 request.form.get('usage_custom','').strip(),discarded,pid))
+            if old_remaining is not None and remaining is not None and remaining != old_remaining:
+                con.execute('INSERT INTO package_movements(package_id,medicine_id,occurred_at,delta,balance_after,reason) VALUES(?,?,?,?,?,?)',
+                    (pid,p['medicine_id'],datetime.now().isoformat(timespec='microseconds'),remaining-old_remaining,remaining,'editor'))
             if discarded:
                 flash('Spotřebované balení bylo automaticky archivováno.', 'ok')
             flash('Balení bylo upraveno.', 'ok')
@@ -776,7 +917,7 @@ def package_label(pid):
         p = con.execute('SELECT p.*,m.name,l.code AS location_code FROM packages p JOIN medicines m ON m.id=p.medicine_id LEFT JOIN locations l ON l.id=p.location_id WHERE p.id=? AND p.discarded_at IS NULL', (pid,)).fetchone()
         if not p:
             abort(404)
-    target = request.host_url.rstrip('/') + url_for('package_detail', pid=pid)
+    target = request.host_url.rstrip('/') + url_for('quick_package', short_id=p['short_id'])
     profiles = {
         'brother54': {'label':'Brother 54 × 17 mm', 'width':54, 'height':17, 'qr':14, 'font':7},
         'brother62': {'label':'Brother 62 × 29 mm', 'width':62, 'height':29, 'qr':23, 'font':10},

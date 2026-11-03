@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% block content %}
+<section class="panel" style="max-width:780px;margin:auto;padding:22px">
+<div class="eyebrow">RYCHLÁ KARTA BALENÍ · QR</div><h1>{{source.name}}</h1>
+<p><strong>{{package_code(source.short_id)}}</strong> · Úložná krabice <strong>{{source.code}}</strong> · {{source.remaining_quantity if source.remaining_quantity is not none else '—'}}/{{source.initial_quantity if source.initial_quantity is not none else '—'}} {{source.quantity_unit or 'ks'}}</p>
+{% if error %}<p class="bad" role="alert">{{error}}</p>{% endif %}
+{% if mode=='inactive' %}<p>Balení je vyřazené. Nelze provádět pohyby.</p>
+{% elif mode=='choose' %}<div class="actions"><a class="btn" href="{{url_for('quick_package',short_id=source.short_id,mode='take')}}">Odebrat</a><a class="btn secondary" href="{{url_for('quick_package',short_id=source.short_id,mode='return')}}">Vrátit</a></div>
+{% elif mode=='take' %}
+<h2>Odebrat z naskenovaného balení</h2>
+<form method="post"><input type="hidden" name="csrf" value="{{csrf_token()}}"><input type="hidden" name="action" value="take"><label>Počet vydaných kusů<input type="number" name="quantity" min="1" max="{{source.remaining_quantity or 0}}" required></label><div class="actions"><button {% if not source.remaining_quantity %}disabled{% endif %}>Potvrdit odečet</button><a class="btn secondary" href="{{url_for('quick_package',short_id=source.short_id)}}">Zrušit</a></div></form>
+{% elif mode=='return' %}
+<h2>Vrátit do právě naskenovaného balení</h2><p>Pokud víte, že jde o správnou krabičku, vyplňte počet. Před uložením se zobrazí potvrzení.</p>
+<form method="post" class="confirm-return"><input type="hidden" name="csrf" value="{{csrf_token()}}"><input type="hidden" name="action" value="return"><input type="hidden" name="confirm" value="yes"><input type="hidden" name="target_id" value="{{source.id}}"><label>Počet vracených kusů<input type="number" name="quantity" min="1" max="{{(source.initial_quantity or 0)-(source.remaining_quantity or 0)}}" required></label><div class="actions"><button {% if source.initial_quantity is none or source.remaining_quantity is none or source.initial_quantity<=source.remaining_quantity %}disabled{% endif %}>Uložit vrácení</button><a class="btn secondary" href="{{url_for('quick_package',short_id=source.short_id,mode='find')}}">Ukázat další balení</a></div></form>
+{% elif mode=='find' %}
+<h2>Najít původní balení podle odečtů</h2><p>QR určil lék, nikoliv cílové balení. Rozklikněte balení a ověřte celou historii.</p>
+{% for p in packs %}<details class="form-accordion" style="margin:10px 0"><summary><strong>{{package_code(p.short_id)}}</strong> · {{p.code}} · {{p.remaining_quantity if p.remaining_quantity is not none else '—'}}/{{p.initial_quantity if p.initial_quantity is not none else '—'}} · Poslední odečet: {{p.last_take_at[:16].replace('T',' ') if p.last_take_at else 'bez záznamu'}}{% if p.last_take_qty %} ({{p.last_take_qty}} ks){% endif %}</summary>
+<h3>Historie všech pohybů tohoto balení</h3>
+{% for mov in movements if mov.package_id==p.id %}<p>{{mov.occurred_at[:16].replace('T',' ')}} · {{'%+d'|format(mov.delta)}} ks · Zůstatek {{mov.balance_after}}</p>{% else %}<p>Žádné pohyby.</p>{% endfor %}
+<form method="post" class="confirm-return"><input type="hidden" name="csrf" value="{{csrf_token()}}"><input type="hidden" name="action" value="return"><input type="hidden" name="confirm" value="yes"><input type="hidden" name="target_id" value="{{p.id}}"><label>Vrátit do {{package_code(p.short_id)}} ({{p.code}}) – počet kusů<input type="number" name="quantity" min="1" max="{{(p.initial_quantity or 0)-(p.remaining_quantity or 0)}}" required></label><button {% if p.initial_quantity is none or p.remaining_quantity is none or p.initial_quantity<=p.remaining_quantity %}disabled{% endif %}>Uložit vrácení</button></form>
+</details>{% endfor %}
+<a class="btn secondary" href="{{url_for('quick_package',short_id=source.short_id,mode='return')}}">Zpět</a>
+{% endif %}
+</section>
+<script>document.querySelectorAll('form.confirm-return').forEach(function(f){f.addEventListener('submit',function(e){const q=f.querySelector('[name=quantity]').value, target=f.querySelector('[name=target_id]').value;const title=f.closest('details')?.querySelector('summary strong')?.textContent||{{package_code(source.short_id)|tojson}};const loc=f.closest('details')?.querySelector('summary')?.textContent||{{source.code|tojson}};if(!window.confirm('Jste si jistí, že chcete vrátit '+q+' ks léku '+{{source.name|tojson}}+' do balení '+title+'?\nUmístění: '+loc+'\nPo potvrzení se uloží změna množství.'))e.preventDefault()})})</script>
+{% endblock %}

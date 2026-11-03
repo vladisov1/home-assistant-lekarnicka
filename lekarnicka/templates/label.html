@@ -39,7 +39,7 @@
 {% for page in range(page_count) %}
 <div class="label-preview {{'sheet-preview' if a4 else ''}}" {% if a4 %}style="--cols:{{sheet.cols}};--gap-x:{{sheet.gap_x}}mm;--gap-y:{{sheet.gap_y}}mm;--margin-x:{{sheet.margin_x}}mm;--margin-y:{{sheet.margin_y}}mm"{% endif %}>
 {% for i in range(page*sheet_capacity, [copies, (page+1)*sheet_capacity]|min) %}
-<div class="printlabel" aria-label="Náhled štítku {{i+1}}"><img src="{{url_for('qr',url=target)}}" alt="QR konkrétního balení"><div class="labeltext">{% if show_name %}<strong>{{p.name}}</strong>{% endif %}{% if show_expiry %}<span>EXP: {{pretty_exp(p.expiry)}}</span>{% endif %}{% if show_id %}<span>ID: {{p.id}}</span>{% endif %}{% if show_location and p.location_code %}<span>Box: {{p.location_code}}</span>{% endif %}</div></div>
+<div class="printlabel" aria-label="Náhled štítku {{i+1}}"><img src="{{url_for('qr',url=target)}}" alt="QR konkrétního balení"><div class="labeltext">{% if show_name %}<strong>{{p.name}}</strong>{% endif %}{% if show_expiry %}<span>EXP: {{pretty_exp(p.expiry)}}</span>{% endif %}{% if show_id %}<span>{{package_code(p.short_id)}}</span>{% endif %}{% if show_location and p.location_code %}<span>Box: {{p.location_code}}</span>{% endif %}</div></div>
 {% endfor %}
 </div>
 {% endfor %}

@@ -101,3 +101,5 @@ html,body{min-height:100%;background:#f4f7fc;color:#192b45}
 .package-editor{max-width:1100px}.package-editor-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}.package-editor-side{min-width:0}.counter-controls{display:flex;align-items:center;justify-content:center;gap:15px;margin:12px 0}.counter-controls button{min-width:48px;font-size:22px}.counter-value{font-size:26px;font-weight:750;min-width:65px;text-align:center}.consumption-counter{padding:14px;border:1px solid #dce1e8;border-radius:9px}.consumption-counter input[type=range]{width:100%}@media(max-width:800px){.package-editor-grid{grid-template-columns:1fr}}
 
 .disabled-action{display:flex;flex-direction:column;gap:5px;max-width:260px}.disabled-action button:disabled{opacity:.4;cursor:not-allowed}.disabled-action small{font-size:12px;color:#64748b}
+
+.movement-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}.movement-filters .actions{grid-column:1/-1}@media(max-width:640px){.movement-filters{grid-template-columns:1fr}}

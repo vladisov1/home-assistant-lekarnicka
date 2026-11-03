@@ -107,3 +107,13 @@
 - Bezpečná akce „Odstranit lék“ s vysvětlením při deaktivaci (vyžaduje rozhodnutí o archivovaných baleních a úpravu backendu).
 - Po uložení balení automaticky otevřít záložku Balení a zvýraznit nový záznam (změna toku aplikace).
 - Funkce označené v přehledu 0.4.4 jako nedokončené nejsou tímto vydáním implementovány.
+
+## 0.4.7-rc1 – testovací kandidát (3. 11. 2026)
+
+- Trvalé veřejné označení fyzického balení `BAL-000001` a krátký QR odkaz `/p/<short_id>`; umístění `L-01` zůstává samostatné.
+- Rychlá karta QR pro odečet a vrácení; u vrácení volba právě skenovaného nebo jiného balení stejného léku, s potvrzením cíle.
+- Zápis časově označených změn množství do tabulky `package_movements` a kontrola kapacity při QR operacích.
+- Filtry historie podle typu, data, počtu a balení v pravém panelu desktopového katalogu; levý seznam léků zůstává viditelný.
+- Zobrazení stavu „Rozbaleno“ v náhledu při již sníženém množství.
+
+**Omezení RC1:** Neověřeno v reálné instalaci Home Assistantu ani na tiskárně Brother QL-700. Historie se vytváří až od instalace této verze, dřívější odečty nelze zpětně rekonstruovat. Před testem proveďte zálohu databáze. Nejde o produkčně ověřené vydání.
