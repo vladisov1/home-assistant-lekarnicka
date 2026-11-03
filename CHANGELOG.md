@@ -1,3 +1,10 @@
+## 0.4.7 RC3 – testovací oprava Brother QR (3. 11. 2026)
+- Nová cesta pro Brother DK-11204: vektorové PDF s QR maticí 12,50 mm, QR Model 2, verze 4, ECC M, poloha x=3 mm, svisle vystředěno, bez škálování bitmapy.
+- Profil Brother nyní nabízí stažení přesného PDF namísto nekalibrovaného tisku HTML.
+- Dlouhé adresy, které nelze zakódovat do verze 4, se explicitně odmítnou; nedochází k tiché změně geometrie.
+- Jednotný údaj o verzi pro horní lištu a postranní panel, aktualizované README a config.yaml.
+- **Zatím neověřeno na reálném tisku přímo z RC3; jde o kandidáta k testování.**
+
 ## 0.4.7 RC2 – testovací oprava QR tisku (3. 11. 2026)
 - Brother DK-11204 (54 × 17 mm): zkušební QR Model 2, ECC M, verze 4, 4 body/modul, 4modulový ochranný okraj.
 - PNG rastr bez interpolace místo SVG, které mohlo být v prohlížeči nevhodně přepočítáno.

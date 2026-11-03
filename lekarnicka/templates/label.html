@@ -16,7 +16,7 @@
     </div>
     <button type="submit">Aktualizovat náhled</button>
   </form>
-  <p><strong>Rozměr:</strong> {{cfg.width}} × {{cfg.height}} mm · <strong>QR:</strong> {{cfg.qr}} mm · <strong>Počet:</strong> {{copies}}. Před běžným tiskem ověřte čitelnost na zkušebním štítku. Pro Brother 54 × 17 mm: QR Model 2, ECC M, verze 4, rastr 4 body/modul; tisk 100 %, bez přizpůsobení stránce.</p>
+  <p><strong>Rozměr:</strong> {{cfg.width}} × {{cfg.height}} mm · <strong>QR:</strong> {{cfg.qr}} mm · <strong>Počet:</strong> {{copies}}. Před běžným tiskem ověřte čitelnost na zkušebním štítku. Pro Brother 54 × 17 mm používejte níže uvedené přesné PDF, odpovídající fyzicky úspěšnému testu 1 (matice 12,50 mm, QR Model 2, verze 4, ECC M). Tisk 100 %, bez přizpůsobení stránce.</p>
 </div>
 <style>
 @page {size: {{"A4" if a4 else (cfg.width|string + "mm " + cfg.height|string + "mm")}}; margin:0}
@@ -43,5 +43,5 @@
 {% endfor %}
 </div>
 {% endfor %}
-<div class="actions noprint label-actions"><button type="button" onclick="window.print()">Tisknout</button><a class="btn secondary" href="{{url_for('medicine_detail',mid=p.medicine_id)}}">Zpět na lék</a></div>
+<div class="actions noprint label-actions">{% if profile=='brother54' %}<a class="btn" href="{{url_for('package_label_brother_pdf',pid=p.id)}}">Stáhnout přesné PDF Brother DK-11204</a><small>Pro ověřený tisk použijte PDF; tlačítko pro tisk z prohlížeče není pro tento profil kalibrované.</small>{% else %}<button type="button" onclick="window.print()">Tisknout</button>{% endif %}<a class="btn secondary" href="{{url_for('medicine_detail',mid=p.medicine_id)}}">Zpět na lék</a></div>
 {% endblock %}

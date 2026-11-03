@@ -22,10 +22,16 @@ from urllib.parse import urlparse
 import qrcode
 from consumption import apply_consumption
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for, send_file, Response
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
 
 DB = os.environ.get('LEKARNICKA_DB', '/data/inventory.db')
 OPTIONS = '/data/options.json'
 app = Flask(__name__)
+
+# Single source of truth for the displayed release version.
+APP_VERSION = '0.4.7-rc3'
+APP_VERSION_LABEL = 'v0.4.7 RC3'
 
 # Home Assistant Supervisor ingress proxy. Trust its ingress headers only when
 # the request originates from the documented internal Supervisor address.
@@ -253,7 +259,7 @@ def csrf():
 def globals_():
     with db() as con:
         cart_count = con.execute('SELECT COUNT(*) FROM shopping_items').fetchone()[0]
-    return {'csrf_token': csrf, 'today': date.today(), 'location_context': request.args.get('location_id', type=int), 'password_enabled': bool(password()), 'cart_count': cart_count, 'package_code': package_code}
+    return {'csrf_token': csrf, 'today': date.today(), 'location_context': request.args.get('location_id', type=int), 'password_enabled': bool(password()), 'cart_count': cart_count, 'package_code': package_code, 'app_version_label': APP_VERSION_LABEL}
 
 @app.before_request
 def check_csrf():
@@ -919,7 +925,7 @@ def package_label(pid):
             abort(404)
     target = request.host_url.rstrip('/') + url_for('quick_package', short_id=p['short_id'])
     profiles = {
-        'brother54': {'label':'Brother 54 × 17 mm', 'width':54, 'height':17, 'qr':13.885, 'font':7},
+        'brother54': {'label':'Brother 54 × 17 mm (ověřený PDF tisk)', 'width':54, 'height':17, 'qr':12.50, 'font':7},
         'brother62': {'label':'Brother 62 × 29 mm', 'width':62, 'height':29, 'qr':23, 'font':10},
         'small': {'label':'Univerzální 50 × 25 mm', 'width':50, 'height':25, 'qr':19, 'font':9},
         'a4': {'label':'A4 – arch štítků', 'width':63.5, 'height':38.1, 'qr':24, 'font':10},
@@ -970,6 +976,63 @@ def package_label(pid):
     return render_template('label.html', p=p, target=target, profile=profile,
                            profiles=profiles, cfg=cfg, show_name=show_name,
                            show_expiry=show_expiry, show_id=show_id, show_location=show_location, copies=copies, a4=a4, sheet=sheet, sheet_capacity=sheet_capacity, page_count=page_count)
+
+@app.get('/labels/package/<int:pid>/brother.pdf')
+@protected
+def package_label_brother_pdf(pid):
+    """Exact 54x17 mm vector PDF matching the physically verified QR test 1.
+
+    Unlike the HTML/PNG route this draws the 33x33 module matrix directly at
+    12.50 mm, x=3 mm, vertically centered. No browser image rescaling.
+    """
+    with db() as con:
+        p = con.execute('SELECT p.*, m.name, l.code AS location_code FROM packages p '
+                        'JOIN medicines m ON m.id=p.medicine_id '
+                        'LEFT JOIN locations l ON l.id=p.location_id '
+                        'WHERE p.id=? AND p.discarded_at IS NULL', (pid,)).fetchone()
+        if not p:
+            abort(404)
+    target = request.host_url.rstrip('/') + url_for('quick_package', short_id=p['short_id'])
+    qr_code = qrcode.QRCode(version=4, error_correction=qrcode.constants.ERROR_CORRECT_M,
+                            box_size=1, border=0)
+    qr_code.add_data(target)
+    try:
+        qr_code.make(fit=False)
+    except qrcode.exceptions.DataOverflowError:
+        abort(422, 'Adresa je příliš dlouhá pro ověřený QR profil verze 4. Použijte kratší adresu aplikace.')
+    matrix = qr_code.get_matrix()
+    if len(matrix) != 33:
+        abort(500, 'Neočekávaná QR matice')
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=(54*mm, 17*mm), pageCompression=1)
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.rect(0, 0, 54*mm, 17*mm, fill=1, stroke=0)
+    module = 12.50 * mm / 33
+    x0, y0 = 3*mm, (17-12.50)*mm/2
+    pdf.setFillColorRGB(0, 0, 0)
+    for row, line in enumerate(matrix):
+        for col, bit in enumerate(line):
+            if bit:
+                pdf.rect(x0+col*module, y0+(32-row)*module,
+                         module, module, fill=1, stroke=0)
+    # Keep all additional print text to the right of the QR; ASCII-safe
+    # fallback avoids missing glyphs in the default PDF Helvetica font.
+    def ascii_safe(value):
+        import unicodedata
+        return unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode('ascii')
+    name = ascii_safe(p['name'])[:38]
+    pdf.setFont('Helvetica-Bold', 7.0)
+    pdf.drawString(20*mm, 11*mm, name)
+    pdf.setFont('Helvetica', 6.0)
+    pdf.drawString(20*mm, 8*mm, package_code(p['short_id']))
+    pdf.drawString(20*mm, 5*mm, 'Box: '+ascii_safe(p['location_code'] or '-')+'  EXP: '+ascii_safe(p['expiry'] or '-'))
+    pdf.showPage()
+    pdf.save()
+    buf.seek(0)
+    return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                     download_name=f'Lekarnicka_{package_code(p["short_id"])}_Brother_DK11204.pdf',
+                     max_age=0)
+
 
 @app.get('/qr')
 @protected
