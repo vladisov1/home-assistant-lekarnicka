@@ -1,3 +1,47 @@
+## 0.4.6 – doplnění podpory Home Assistant Ingress (kandidát)
+
+- Zapnuta podpora Ingress na interním portu 8099.
+- Zobrazení v postranním panelu je volitelné a spravuje jej správce v nastavení doplňku; není zapnuto automaticky.
+- `panel_admin: false` umožňuje položku zobrazit i běžným uživatelům Home Assistantu.
+- Flask generuje odkazy s prefixem Ingress při požadavcích od interní proxy Supervisoru.
+- Přihlášení Home Assistantu nahrazuje heslo aplikace pouze pro požadavky od důvěryhodné proxy; přímý přístup přes port 8099 zůstává beze změny.
+- Vyžaduje integrační ověření v Home Assistantu.
+
+## 0.4.6 – další kandidát k ověření (2026-11-03)
+
+- Oddělena validace kusové spotřeby do samostatného modulu `consumption.py`.
+- Zpřísněna kontrola odečtu, neměnnosti počátečního množství a jednotek u sledovaného balení.
+- Přidány jednotkové testy plného balení, částečné spotřeby, vyčerpání a chybných vstupů.
+- Doplněno zahrnutí validačního modulu do Docker image.
+- Stav: kandidát k ověření; provozní instalace a migrace dosud neověřeny.
+
+## 0.4.6 – bezpečnostní kontrola odečtů (3. 11. 2026)
+
+- Oprava validace odečtu: server používá skutečný zůstatek v databázi, nikoliv upravitelnou hodnotu odeslanou formulářem.
+- Při zahájení evidence se zůstatek inicializuje počátečním množstvím.
+- Zamítnutí záporných, nadlimitních a neplatných odečtů; zachování kontextu při chybě.
+- Kontrolní testy aktualizovány. Stále vývojový kandidát bez ověření ve spuštěném Home Assistantu.
+
+## 0.4.6 – rozšířený kandidát k ověření (3. 11. 2026)
+
+- Zamezení změně počáteční kapacity již sledovaného balení při odečtu spotřeby.
+- Oprava návratu tlačítkem Zrušit se zachováním kontextu úložné krabice.
+- Neaktivní tlačítko Odstranit lék s vysvětlením při existenci fyzických balení.
+- Zobrazení množství počáteční/zbývající také na kartě balení v detailu léku.
+- Doplněny regresní kontroly těchto změn.
+
+**Stále vývojové sestavení:** bez integračního ověření ve Flasku a Home Assistantu.
+
+## 0.4.6 – předchozí kandidát (3. 11. 2026)
+
+- Zachování vybraného léku při návratu z editace léku, balení a detailu.
+- Návazná obrazovka po přidání balení s odkazy na QR štítky nových balení.
+- Dvousloupcová editace fyzického balení, tlačítko Zrušit.
+- Počítadlo −/+ a posuvník pro odečet kusových jednotek; zůstatek počítá aplikace.
+- Zobrazení množství jako počáteční/zbývající v přehledu balení.
+
+**Poznámka:** Kandidát k ověření, nikoli potvrzené finální vydání. Počáteční množství lze nastavit při zahájení evidence; při prvním uložení se zbývající množství automaticky doplní. Editace balení po uložení vrací do katalogu s vybraným lékem. Bez ověření běžícího Flask rozhraní a instalace v Home Assistantu nelze vydání označit za stabilní. Dříve plánované integrace SÚKL, PIL/SmPC a AI importů nejsou tímto označeny za dokončené.
+
 ## 0.4.4-rc2 – rozpracovaná testovací sestava (2026-11-02)
 
 ### Nově implementováno

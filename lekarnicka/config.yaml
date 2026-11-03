@@ -1,5 +1,5 @@
 name: "Lékárnička"
-version: "0.4.5-rc1"
+version: "0.4.6"
 slug: "lekarnicka"
 description: "Evidence léků, jednotlivých balení a úložných krabic"
 url: "https://github.com/vladisov1/home-assistant-lekarnicka"
@@ -16,6 +16,11 @@ ports_description:
   8099/tcp: "Webové rozhraní v místní síti"
 webui: "http://[HOST]:[PORT:8099]"
 homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:pill
+panel_title: "Lékárnička"
+panel_admin: false
 options:
   app_password: ""
   ha_token: ""

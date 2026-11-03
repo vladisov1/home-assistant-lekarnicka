@@ -96,3 +96,8 @@ html,body{min-height:100%;background:#f4f7fc;color:#192b45}
 @media(max-width:1150px){.catalog-layout{grid-template-columns:1fr}.catalog-detail.panel{position:static}.topbar .head{grid-template-columns:190px minmax(180px,1fr) auto}}
 @media(max-width:800px){.topbar .head{display:flex;flex-wrap:wrap;padding:9px 12px}.header-search{order:3;width:100%}.action-label{display:none}.app-layout{display:block}.sidebar{width:100%;min-height:0;flex-direction:row;overflow-x:auto;gap:3px;padding:5px}.sidebar-foot,.sidebar-caption{display:none}.sidebar a{white-space:nowrap}.content.wrap{padding:13px}.catalog-layout{grid-template-columns:1fr}}
 @media print{.header-search,.sidebar-foot,.form-accordion{display:none!important}}
+
+/* v0.4.6: fyzická balení */
+.package-editor{max-width:1100px}.package-editor-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}.package-editor-side{min-width:0}.counter-controls{display:flex;align-items:center;justify-content:center;gap:15px;margin:12px 0}.counter-controls button{min-width:48px;font-size:22px}.counter-value{font-size:26px;font-weight:750;min-width:65px;text-align:center}.consumption-counter{padding:14px;border:1px solid #dce1e8;border-radius:9px}.consumption-counter input[type=range]{width:100%}@media(max-width:800px){.package-editor-grid{grid-template-columns:1fr}}
+
+.disabled-action{display:flex;flex-direction:column;gap:5px;max-width:260px}.disabled-action button:disabled{opacity:.4;cursor:not-allowed}.disabled-action small{font-size:12px;color:#64748b}

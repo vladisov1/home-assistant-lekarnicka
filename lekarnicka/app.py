@@ -20,11 +20,40 @@ from functools import wraps
 from urllib.parse import urlparse
 
 import qrcode
+from consumption import apply_consumption
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for, send_file, Response
 
 DB = os.environ.get('LEKARNICKA_DB', '/data/inventory.db')
 OPTIONS = '/data/options.json'
 app = Flask(__name__)
+
+# Home Assistant Supervisor ingress proxy. Trust its ingress headers only when
+# the request originates from the documented internal Supervisor address.
+INGRESS_SUPERVISOR_IP = '172.30.32.2'
+
+
+class IngressPathMiddleware:
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+
+    def __call__(self, environ, start_response):
+        if environ.get('REMOTE_ADDR') == INGRESS_SUPERVISOR_IP:
+            prefix = environ.get('HTTP_X_INGRESS_PATH', '').rstrip('/')
+            if prefix.startswith('/api/hassio_ingress/') and not any(
+                c in prefix for c in ('\\', '?', '#', '\r', '\n')
+            ):
+                environ['SCRIPT_NAME'] = prefix
+        return self.wrapped(environ, start_response)
+
+
+app.wsgi_app = IngressPathMiddleware(app.wsgi_app)
+
+
+def is_ingress_request():
+    return request.remote_addr == INGRESS_SUPERVISOR_IP and bool(
+        request.headers.get('X-Ingress-Path', '').startswith('/api/hassio_ingress/')
+    )
+
 os.makedirs(os.path.dirname(DB), exist_ok=True)
 secret_path = os.path.join(os.path.dirname(DB), '.session_secret')
 if not os.path.exists(secret_path):
@@ -163,7 +192,7 @@ def stock_status(con, mid):
 def protected(f):
     @wraps(f)
     def inner(*args, **kwargs):
-        if not password():
+        if not password() or is_ingress_request():
             return f(*args, **kwargs)
         if not session.get('authenticated'):
             return redirect(url_for('login', next=request.full_path.rstrip('?')))
@@ -190,7 +219,7 @@ def check_csrf():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if not password():
+    if not password() or is_ingress_request():
         return redirect(url_for('index'))
     if request.method == 'POST':
         if secrets.compare_digest(request.form.get('password', ''), password()):
@@ -502,7 +531,7 @@ def medicine_edit(mid):
             elif name:
                 con.execute('UPDATE medicines SET name=?,ean=?,notes=?,dosage_form=?,active_ingredient=?,manufacturer=?,sukl_code=?,atc=?,description=? WHERE id=?', (name, *(request.form.get(k,'').strip() for k in ('ean','notes','dosage_form','active_ingredient','manufacturer','sukl_code','atc','description')), mid))
                 save_medicine_extras(con, mid, request.form)
-                return redirect(url_for('medicine_detail', mid=mid, location_id=loc_id) if loc_id else url_for('medicine_detail', mid=mid))
+                return redirect(url_for('index', selected=mid))
             flash('Zadejte název léku nebo opravte kód SÚKL.', 'error')
     return render_template('medicine_form.html', m=m, loc_id=loc_id)
 
@@ -587,18 +616,31 @@ def package_new(mid):
                         for item in pending:
                             if not con.execute('SELECT 1 FROM locations WHERE id=?', (item['location_id'],)).fetchone():
                                 raise ValueError('Úložná krabice již neexistuje.')
+                        created_ids = []
                         for item in pending:
-                            con.execute('INSERT INTO packages(medicine_id,location_id,expiry) VALUES(?,?,?)',
+                            cursor = con.execute('INSERT INTO packages(medicine_id,location_id,expiry) VALUES(?,?,?)',
                                         (mid, item['location_id'], item['expiry']))
+                            created_ids.append(cursor.lastrowid)
                     session.pop(key, None)
                     flash(f'Uloženo {len(pending)} fyzických balení.', 'ok')
-                    return redirect(url_for('medicine_detail', mid=mid, location_id=loc_id) if loc_id else url_for('medicine_detail', mid=mid))
+                    return redirect(url_for('package_created', mid=mid, pids=','.join(map(str,created_ids))))
                 except (sqlite3.Error, ValueError) as exc:
                     flash('Balení nebyla uložena: ' + str(exc), 'error')
         return redirect(url_for('package_new', mid=mid, location_id=loc_id) if loc_id else url_for('package_new', mid=mid))
     code_by_id = {l['id']: l['code'] for l in locations}
     return render_template('package_new.html', m=m, locations=locations, loc_id=loc_id,
                            pending=pending, code_by_id=code_by_id)
+
+@app.get('/medicines/<int:mid>/packages/created')
+@protected
+def package_created(mid):
+    ids = [int(x) for x in request.args.get('pids','').split(',') if x.isdigit()][:100]
+    with db() as con:
+        medicine = con.execute('SELECT * FROM medicines WHERE id=?', (mid,)).fetchone()
+        if not medicine:
+            abort(404)
+        packages = [con.execute('SELECT * FROM packages WHERE id=? AND medicine_id=?', (pid,mid)).fetchone() for pid in ids]
+    return render_template('package_created.html', m=medicine, packages=[x for x in packages if x])
 
 @app.route('/packages/<int:pid>', methods=['GET', 'POST'])
 @protected
@@ -629,24 +671,18 @@ def package_detail(pid):
             opened_at = (p['opened_at'] or datetime.now().isoformat(timespec='seconds')) if opened else None
             initial, remaining, unit = p['initial_quantity'], p['remaining_quantity'], p['quantity_unit']
             if preference('detailed_consumption') == '1':
-                raw_initial = request.form.get('initial_quantity', '').strip()
-                raw_remaining = request.form.get('remaining_quantity', '').strip()
-                if raw_initial or raw_remaining:
-                    try:
-                        initial = int(raw_initial)
-                        remaining = int(raw_remaining)
-                        if not (0 <= remaining <= initial <= 100000):
-                            raise ValueError()
-                    except ValueError:
-                        flash('Počty musí být celá nezáporná čísla a zbývající počet nesmí překročit počáteční.', 'error')
-                        return redirect(url_for('package_detail', pid=pid))
-                    unit = request.form.get('quantity_unit','')
-                    if unit not in ('tablety','kapsle','sáčky','čípky','kusy'):
-                        flash('Vyberte platnou kusovou jednotku.', 'error')
-                        return redirect(url_for('package_detail', pid=pid))
+                try:
+                    initial, remaining, unit = apply_consumption(
+                        initial, remaining, unit,
+                        request.form.get('initial_quantity', ''),
+                        request.form.get('consume_quantity', '0'),
+                        request.form.get('quantity_unit', ''))
+                except ValueError as exc:
+                    flash(str(exc), 'error')
+                    return redirect(url_for('package_detail', pid=pid, location_id=loc_id) if loc_id else url_for('package_detail', pid=pid))
             instructions = [x for x in request.form.getlist('usage_instructions') if x in
                             ('Po jídle','Před jídlem','Před spaním','Zapít vodou','Užívat po dobu 7 dnů')]
-            discarded = datetime.now().isoformat(timespec='seconds') if remaining == 0 and initial is not None else None
+            discarded = datetime.now().isoformat(timespec='seconds') if remaining == 0 and initial is not None and initial > 0 else None
             con.execute('''UPDATE packages SET location_id=?,expiry=?,notes=?,is_opened=?,opened_at=?,
                 batch=?,initial_quantity=?,remaining_quantity=?,quantity_unit=?,usage_schedule=?,
                 usage_instructions=?,usage_custom=?,discarded_at=COALESCE(?,discarded_at)
@@ -657,7 +693,7 @@ def package_detail(pid):
             if discarded:
                 flash('Spotřebované balení bylo automaticky archivováno.', 'ok')
             flash('Balení bylo upraveno.', 'ok')
-            return redirect(url_for('medicine_detail', mid=p['medicine_id'], location_id=loc_id) if loc_id else url_for('medicine_detail', mid=p['medicine_id']))
+            return redirect(url_for('index', selected=p['medicine_id'], location_id=loc_id) if loc_id else url_for('index', selected=p['medicine_id']))
     return render_template('package_detail.html', p=p, locations=locations, loc_id=loc_id, detailed=preference('detailed_consumption') == '1', usage_selected=json.loads(p['usage_instructions'] or '[]'))
 
 @app.post('/packages/<int:pid>/open')
