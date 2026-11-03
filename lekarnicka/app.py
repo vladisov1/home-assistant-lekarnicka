@@ -919,7 +919,7 @@ def package_label(pid):
             abort(404)
     target = request.host_url.rstrip('/') + url_for('quick_package', short_id=p['short_id'])
     profiles = {
-        'brother54': {'label':'Brother 54 × 17 mm', 'width':54, 'height':17, 'qr':14, 'font':7},
+        'brother54': {'label':'Brother 54 × 17 mm', 'width':54, 'height':17, 'qr':13.885, 'font':7},
         'brother62': {'label':'Brother 62 × 29 mm', 'width':62, 'height':29, 'qr':23, 'font':10},
         'small': {'label':'Univerzální 50 × 25 mm', 'width':50, 'height':25, 'qr':19, 'font':9},
         'a4': {'label':'A4 – arch štítků', 'width':63.5, 'height':38.1, 'qr':24, 'font':10},
@@ -978,12 +978,29 @@ def qr():
     parsed = urlparse(target)
     if parsed.scheme not in ('http', 'https') or parsed.netloc != request.host:
         abort(400)
-    from qrcode.image.svg import SvgPathImage
-    image = qrcode.make(target, image_factory=SvgPathImage, border=4, box_size=10, error_correction=qrcode.constants.ERROR_CORRECT_M)
+    # RC2: Brother QL-700 / DK-11204. QR Model 2, ECC M, version 4,
+    # 4 printer dots per module including 4-module quiet zone (41*4=164 px).
+    # Use exact raster modules rather than a browser-scaled SVG path.
+    # Other label profiles retain automatic version selection.
+    brother = request.args.get('profile') == 'brother54'
+    qr_code = qrcode.QRCode(version=4 if brother else None,
+                            error_correction=qrcode.constants.ERROR_CORRECT_M,
+                            box_size=4 if brother else 8, border=4)
+    qr_code.add_data(target)
+    try:
+        qr_code.make(fit=not brother)
+    except qrcode.exceptions.DataOverflowError:
+        # Long user-defined hostnames may not fit version 4. Preserve a
+        # functional code rather than truncate the URL; warn in print UI.
+        qr_code = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
+                                box_size=4, border=4)
+        qr_code.add_data(target)
+        qr_code.make(fit=True)
+    image = qr_code.make_image(fill_color='black', back_color='white').convert('1')
     buffer = io.BytesIO()
-    image.save(buffer)
+    image.save(buffer, format='PNG')
     buffer.seek(0)
-    return send_file(buffer, mimetype='image/svg+xml')
+    return send_file(buffer, mimetype='image/png', max_age=0)
 
 
 BACKUPS = Path(os.path.dirname(DB)) / 'backups'

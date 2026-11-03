@@ -1,3 +1,10 @@
+## 0.4.7 RC2 – testovací oprava QR tisku (3. 11. 2026)
+- Brother DK-11204 (54 × 17 mm): zkušební QR Model 2, ECC M, verze 4, 4 body/modul, 4modulový ochranný okraj.
+- PNG rastr bez interpolace místo SVG, které mohlo být v prohlížeči nevhodně přepočítáno.
+- Profil QR 13,885 mm (164 bodů při 300 dpi), krátký odkaz `/p/<short_id>` zachován.
+- Pokud se adresa nevejde do verze 4, generátor zvolí vyšší verzi; čitelnost může být odlišná.
+- **Dosud neověřeno fyzickým tiskem v Lékárničce.** Nejdříve vytisknout jediný testovací štítek.
+
 ## 0.4.6 – doplnění podpory Home Assistant Ingress (kandidát)
 
 - Zapnuta podpora Ingress na interním portu 8099.
