@@ -48,3 +48,51 @@ body{background:#f3f6fb;color:#1d2c42}.topbar{background:linear-gradient(105deg,
 
 /* v0.4.4 RC3: kompaktní detail a přístupné záložky */
 .medicine-tabs{display:flex;justify-content:flex-start;gap:4px;flex-wrap:wrap;border-bottom:1px solid #d5e0ed;margin:10px 0 16px}.medicine-tabs a{display:block;padding:11px 17px;color:#365675;text-decoration:none;font-weight:650;border-bottom:3px solid transparent}.medicine-tabs a.active{color:#155a9e;border-bottom-color:#176fb8;background:#eaf3fd}.medicine-tabs a:hover{background:#edf4fc}.content>.panel{margin:12px 0}.titlebar{margin-bottom:12px}.catalog-detail{padding:17px}.catalog-list td{padding:9px 10px}
+
+/* v0.4.5 RC1 – výhradně vizuální vrstva podle schváleného vzoru */
+:root{--navy:#193657;--navy2:#284f7a;--blue:#286ad2;--line:#dce4ef;--muted:#60718a}
+html,body{min-height:100%;background:#f4f7fc;color:#192b45}
+.topbar{background:linear-gradient(110deg,#173151,#24466e);min-height:56px}
+.topbar .head{max-width:none;padding:8px 20px;display:grid;grid-template-columns:245px minmax(210px,430px) 1fr;gap:20px;min-height:56px}
+.topbar .brand{font-size:21px;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.topbar .brand small{background:#35577f;border-radius:20px;padding:4px 8px;font-size:11px}
+.header-search{display:flex;align-items:center;background:white;border-radius:8px;min-width:0;overflow:hidden;height:36px}
+.header-search input{margin:0;padding:8px 12px;border:0;outline:0;background:white;min-width:0;font-size:13px}
+.header-search button{background:white;color:#365579;border:0;border-radius:0;padding:6px 13px}
+.top-actions{justify-content:flex-end;gap:18px;font-size:13px}
+.app-layout{max-width:none;min-height:calc(100vh - 56px);align-items:stretch}
+.sidebar{width:205px;min-height:calc(100vh - 56px);background:linear-gradient(#294d79,#193451);padding:15px 9px;border:0;display:flex;flex-direction:column}
+.sidebar a{font-size:13px;padding:11px 12px;margin:2px 0;font-weight:550}
+.sidebar a:hover,.sidebar a:focus-visible{background:#426b9b}
+.sidebar-caption{padding:15px 12px 6px;font-size:10px}
+.sidebar-foot{margin-top:auto;border-top:1px solid #426184;padding:15px 10px;color:#d2e3f7;font-size:12px;line-height:2}
+.sidebar-foot small{color:#b8cce3}
+.content.wrap{width:100%;max-width:none;margin:0;padding:18px 20px 28px;align-self:stretch;min-height:0}
+.content>.titlebar:first-child{margin-top:0;padding-top:0}
+.titlebar{margin:0 0 12px;align-items:center}.titlebar h1{font-size:23px;margin:3px 0}.titlebar p{margin:4px 0;font-size:13px}
+.eyebrow{font-size:11px;letter-spacing:.09em}
+.content>.search{margin:10px 0 14px}
+.search input{min-height:38px}.search button{min-height:38px}
+.catalog-layout{grid-template-columns:minmax(0,1.38fr) minmax(310px,1fr);gap:14px}
+.catalog-detail.panel{margin:0;position:sticky;top:12px;min-height:340px;padding:16px}
+.panel{margin:12px 0;padding:17px;border:1px solid var(--line);border-radius:11px;box-shadow:0 3px 14px rgba(24,50,83,.035)}
+.panel h2{margin:8px 0 13px}.detail-head h2{font-size:19px}.detail-head p{font-size:12px}
+.tablewrap{border-color:var(--line);border-radius:9px}.tablewrap th{background:#e9eff8;font-size:12px;padding:11px 10px}.tablewrap td{padding:11px 10px;font-size:13px}
+.catalog-row.is-selected td{background:#dceafd!important}.catalog-row:hover td{background:#f0f6ff}
+.catalog-subtitle{margin-top:3px}.detail-facts{gap:10px;padding:12px 0}.detail-packages-head h3{font-size:15px}
+.package-preview{padding:10px 12px}.package-preview strong{font-size:13px}.package-preview small{font-size:12px}
+.detail-empty{padding:65px 8px}.detail-empty h2{font-size:17px}.detail-empty p{font-size:13px}
+.btn,button{border-radius:7px;font-size:13px;padding:9px 12px;background:var(--blue);border-color:var(--blue)}
+.btn.secondary,button.secondary{background:#fff;color:#28517d}.btn.danger,button.danger{background:#fff;color:#b32626;border-color:#d9b5b5}
+.medicine-tabs{display:flex;justify-content:flex-start;border-bottom:1px solid var(--line);gap:6px;margin:14px 0 16px;flex-wrap:wrap}
+.medicine-tabs a{padding:10px 16px;color:#335577;text-decoration:none;font-size:14px;font-weight:650;border-bottom:3px solid transparent}
+.medicine-tabs a.active{background:#e9f1ff;color:#1555ad;border-bottom-color:#2471d1}
+.form-accordion{border:1px solid var(--line);border-radius:9px;margin:15px 0;padding:0 14px 12px;background:#fcfdff}
+.form-accordion:not([open]){padding-bottom:0}
+.form-accordion summary{cursor:pointer;padding:14px 0;font-size:15px;font-weight:700;color:#213d61}
+.form-accordion[open] summary{border-bottom:1px solid var(--line);margin-bottom:10px}
+.form-accordion label{margin:12px 0}.form-accordion p{font-size:13px}
+.narrow{max-width:780px}
+@media(max-width:1150px){.catalog-layout{grid-template-columns:1fr}.catalog-detail.panel{position:static}.topbar .head{grid-template-columns:190px minmax(180px,1fr) auto}}
+@media(max-width:800px){.topbar .head{display:flex;flex-wrap:wrap;padding:9px 12px}.header-search{order:3;width:100%}.action-label{display:none}.app-layout{display:block}.sidebar{width:100%;min-height:0;flex-direction:row;overflow-x:auto;gap:3px;padding:5px}.sidebar-foot,.sidebar-caption{display:none}.sidebar a{white-space:nowrap}.content.wrap{padding:13px}.catalog-layout{grid-template-columns:1fr}}
+@media print{.header-search,.sidebar-foot,.form-accordion{display:none!important}}

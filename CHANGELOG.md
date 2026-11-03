@@ -50,3 +50,16 @@
 - Audit všech schválených požadavků, včetně nastavení HA seznamu a oprav UI.
 ### Ověření
 - Syntaxe Pythonu a 8 nezávislých testů prošly; dva integrační testy se nepodařilo spustit kvůli nedostupné knihovně Flask/Werkzeug v tomto prostředí. Nejde o potvrzenou instalační sestavu.
+
+## 0.4.5 RC1 — vizuální aktualizace (3. 11. 2026)
+- Přestavba horní lišty včetně vyhledávacího pole, tmavé navigace a kompaktního katalogu.
+- Odstranění nadměrného horního odsazení, nové proporce katalogu a pravého panelu.
+- Sjednocení tabulek, detailů, záložek, typografie a formulářů.
+- Úprava označení fyzických balení v katalogu a detailu: nezobrazovat databázová ID jako pořadová čísla.
+- Sekce spotřeby a individuálních pokynů v editaci balení jako rozbalovací skupiny; vyplněné skupiny se otevřou.
+- Bez změny databázového modelu, backendových funkcí a migračních pravidel.
+
+### Zůstává k řešení mimo čistě vizuální rozsah 0.4.5
+- Bezpečná akce „Odstranit lék“ s vysvětlením při deaktivaci (vyžaduje rozhodnutí o archivovaných baleních a úpravu backendu).
+- Po uložení balení automaticky otevřít záložku Balení a zvýraznit nový záznam (změna toku aplikace).
+- Funkce označené v přehledu 0.4.4 jako nedokončené nejsou tímto vydáním implementovány.
